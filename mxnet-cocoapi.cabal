@@ -23,6 +23,7 @@ Library
                             TypeFamilies,
                             OverloadedLabels
     build-depends:          base >= 4.7 && < 5.0
+                          , storable-tuple
                           , mxnet-base
                           , mxnet-ops
                           , vector >= 0.12

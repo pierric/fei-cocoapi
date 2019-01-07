@@ -4,9 +4,11 @@ module MXNet.Coco.Raw where
 import Foreign.Storable
 import Foreign.Ptr
 import Foreign.C.Types
+import Foreign.C.String
 import Foreign.Marshal.Array
 import Foreign.Marshal.Alloc
 import Foreign.Marshal.Utils
+import Foreign.Storable.Tuple ()
 import qualified Data.Vector.Storable as SV
 import qualified Data.Vector.Storable.Mutable as SVM
 import Control.Exception 
@@ -50,7 +52,7 @@ withRLEArray o a = withArray o (a . castPtr)
 svUnsafeWith :: Storable a => SV.Vector a -> (Ptr a -> IO b) -> IO b
 svUnsafeWith = SV.unsafeWith
 
-newtype BB = BB (SV.Vector (Double, Double, Double, Double))
+newtype BB = BB (SV.Vector (CDouble, CDouble, CDouble, CDouble))
 
 {#pointer BB as PtrBB #}
 
@@ -171,7 +173,7 @@ bbIou (BB dt) (BB gt) iscrowd = do
         c = length iscrowd
     assert (n == c) $ allocaArray (m*n) $ \po ->
         svUnsafeWith dt $ \pdt -> svUnsafeWith gt $ \pgt -> do
-            bbIou_ pdt pgt m n (SV.fromList $ map fromIntegral iscrowd) po
+            bbIou_ (castPtr pdt) (castPtr pgt) m n (SV.fromList $ map fromIntegral iscrowd) po
             map realToFrac <$> peekArray (m * n) po
 
 {#fun bbNms as bbNms_
@@ -188,12 +190,12 @@ bbNms (BB dt) thr = do
     let n = SV.length dt
     svUnsafeWith dt $ \pbb -> 
         allocaArray n $ \keep -> do
-            bbNms_ pbb n keep thr
+            bbNms_ (castPtr pbb) n keep (realToFrac thr)
             map (>0) <$> peekArray n keep
 
 {#fun rleToBbox as rleToBbox_
     {
-        withRLE* `RLE',
+        withRLEArray* `[RLE]',
         `PtrBB',
         `Int'
     } -> `()'
@@ -204,4 +206,59 @@ rleToBbox r = do
     let n = length r
     mbb <- SVM.new n
     SVM.unsafeWith mbb $ \pbb -> rleToBbox_ r (castPtr pbb) n
-    SV.freeze mbb
+    BB <$> SV.freeze mbb
+
+{#fun rleFrBbox as rleFrBbox_
+    {
+        `Ptr ()',
+        `PtrBB',
+        `Int',
+        `Int',
+        `Int'
+    } -> `()'
+#}
+
+rleFrBbox :: BB -> Int -> Int -> IO [RLE]
+rleFrBbox (BB bb) h w = do
+    let n = SV.length bb
+    allocaArray n $ \(pr :: Ptr RLE) -> svUnsafeWith bb $ \pbb -> do
+        rleFrBbox_ (castPtr pr) (castPtr pbb) h w n
+        peekArray n pr
+
+{#fun rleFrPoly as rleFrPoly_
+    {
+        `Ptr ()',
+        id `Ptr CDouble',
+        `Int',
+        `Int',
+        `Int'
+    } -> `()'
+#}
+
+rleFrPoly :: SV.Vector (CDouble, CDouble) -> Int -> Int -> IO RLE
+rleFrPoly xy h w = do
+    let k = SV.length xy
+    allocaRLE $ \prle -> svUnsafeWith xy $ \pxy -> do
+        rleFrPoly_ prle (castPtr pxy) k h w
+        peekRLE prle 
+
+{#fun rleToString as rleToString_
+    {
+        withRLE* `RLE'
+    } -> `String' peekAndFreeCString*
+#}
+
+peekAndFreeCString :: Ptr CChar -> IO String
+peekAndFreeCString cstr = do
+    hstr <- peekCString cstr
+    free cstr
+    return hstr
+
+{#fun rleFrString as ^
+    {
+        allocaRLE- `RLE' peekRLE*,
+        `String',
+        `Int',
+        `Int'
+    } -> `()'
+#}
