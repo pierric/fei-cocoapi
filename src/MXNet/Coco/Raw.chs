@@ -3,14 +3,16 @@ module MXNet.Coco.Raw where
 
 import Foreign.Storable
 import Foreign.Ptr
+import Foreign.ForeignPtr
+import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Foreign.C.Types
-import Foreign.C.String
+import Foreign.C.String (CString)
 import Foreign.Marshal.Array
 import Foreign.Marshal.Alloc
-import Foreign.Marshal.Utils
 import Foreign.Storable.Tuple ()
 import qualified Data.Vector.Storable as SV
 import qualified Data.Vector.Storable.Mutable as SVM
+import qualified Data.ByteString as BS
 import Control.Exception 
 
 #include "maskApi.h"
@@ -19,35 +21,53 @@ data RLE = RLE {
     _rle_h :: Int,
     _rle_w :: Int,
     _rle_m :: Int,
-    _rle_cnts :: Ptr CUInt
+    _rle_cnts :: ForeignPtr CUInt
 }
 
-instance Storable RLE where
-  sizeOf _ = {#sizeof RLE #}
-  alignment _ = 4
-  peek p = do
-    h <- fromIntegral <$> {#get RLE->h #} p
-    w <- fromIntegral <$> {#get RLE->w #} p
-    m <- fromIntegral <$> {#get RLE->m #} p
-    c <- {#get RLE->cnts #} p
-    return $ RLE h w m c
-  poke p (RLE h w m c) = do
-    {#set RLE.h #} p (fromIntegral h)
-    {#set RLE.w #} p (fromIntegral w)
-    {#set RLE.m #} p (fromIntegral m)
-    {#set RLE.cnts #} p c
+makeRLE :: (Ptr () -> IO ()) -> IO RLE
+makeRLE a = makeRLEs 1 a >>= return . head
 
-allocaRLE :: (Ptr () -> IO a) -> IO a
-allocaRLE a = alloca (\ (p :: Ptr RLE) -> a (castPtr p))
+makeRLEs :: Int -> (Ptr () -> IO ()) -> IO [RLE]
+makeRLEs num a = allocaBytesAligned (num * {#sizeof RLE #}) {#alignof RLE#} (\prle -> do
+    a prle
+    go num prle [])
+  where
+    go 0 _ rles = return $ reverse rles
+    go n prle rles = do
+        rle <- peekRLE prle
+        go (n-1) (prle `plusPtr` {#sizeof RLE#}) (rle : rles)
 
-peekRLE :: Ptr () -> IO RLE
-peekRLE = peek . castPtr
+    peekRLE prle = do
+        h <- fromIntegral <$> {#get RLE->h #} prle
+        w <- fromIntegral <$> {#get RLE->w #} prle
+        m <- fromIntegral <$> {#get RLE->m #} prle
+        raw_c <- {#get RLE->cnts #} prle
+        mgr_c <- newForeignPtr finalizerFree raw_c
+        return $ RLE h w m mgr_c
 
 withRLE :: RLE -> (Ptr () -> IO a) -> IO a
-withRLE o a = with o (a . castPtr)
+withRLE rle = withRLEs [rle]
 
-withRLEArray :: [RLE] -> (Ptr () -> IO a) -> IO a
-withRLEArray o a = withArray o (a . castPtr)
+withRLEs :: [RLE] -> (Ptr () -> IO a) -> IO a
+withRLEs rles a = do
+    let num = length rles
+    allocaBytesAligned (num * {#sizeof RLE#}) {#alignof RLE#} $ \prles -> do
+        go prles rles
+        ret <- a prles
+        mapM_ (touchForeignPtr . _rle_cnts) rles
+        return ret
+  where 
+    go _ [] = return ()
+    go prles (rle : nrles) = do
+        pokeRLE prles rle
+        go (prles `plusPtr` {#sizeof RLE#}) nrles
+
+    -- must touch _rle_cnts after using the prle
+    pokeRLE prle (RLE h w m c) = do
+        {#set RLE.h #} prle (fromIntegral h)
+        {#set RLE.w #} prle (fromIntegral w)
+        {#set RLE.m #} prle (fromIntegral m)
+        {#set RLE.cnts #} prle (unsafeForeignPtrToPtr c)
 
 svUnsafeWith :: Storable a => SV.Vector a -> (Ptr a -> IO b) -> IO b
 svUnsafeWith = SV.unsafeWith
@@ -56,49 +76,60 @@ newtype BB = BB (SV.Vector (CDouble, CDouble, CDouble, CDouble))
 
 {#pointer BB as PtrBB #}
 
-{#fun rleInit as ^ 
+{#fun rleInit as rleInit_
     {
-        allocaRLE- `RLE' peekRLE*,
+        `Ptr ()',
         `Int',
         `Int',
         `Int',
-        withArray* `[CUInt]'
+        id `Ptr CUInt'
     } -> `()'
 #}
 
-{#fun rleFree as ^
-    {
-        withRLE* `RLE'
-    } -> `()'
-#}
+rleInit :: Int -> Int -> [CUInt] -> IO RLE
+rleInit h w cnts = do
+    makeRLE (\pr -> withArrayLen cnts (\m pc -> rleInit_ pr h w m pc))
+
+-- cause the storage owned by rle to be freed immediately,
+-- without not calling the c-api rleFree
+rleFree :: RLE -> IO ()
+rleFree rle = finalizeForeignPtr (_rle_cnts rle)
 
 {#fun rleEncode as rleEncode_
     {
         `Ptr ()',
-        svUnsafeWith* `SV.Vector CUChar',
+        id `Ptr CUChar',
         `Int',
         `Int',
         `Int'
     } -> `()'
 #}
   
-rleEncode :: SV.Vector CUChar -> Int -> Int -> Int -> IO [RLE]
+rleEncode :: BS.ByteString -> Int -> Int -> Int -> IO [RLE]
 rleEncode m h w n = do
-    allocaArray n (\ (prle :: Ptr RLE) -> do
-        rleEncode_ (castPtr prle) m h w n
-        peekArray n prle)
+    makeRLEs n (\ prle ->
+        withByteString m (\pm -> do 
+            rleEncode_ prle (castPtr pm) h w n))
 
-{#fun rleDecode as ^
+{#fun rleDecode as rleDecode_
     {
-        withRLE* `RLE',
-        svUnsafeWith* `SV.Vector CUChar',
+        withRLEs* `[RLE]',
+        id `Ptr CUChar',
         `Int'
     } -> `()'
 #}
 
+rleDecode :: [RLE] -> Int -> Int -> IO BS.ByteString
+rleDecode rles h w = do
+    let n = length rles 
+        size = n * h * w
+    allocaBytes size $ (\ptr -> do
+        rleDecode_ rles ptr n
+        BS.packCStringLen (castPtr ptr, size))
+
 {#fun rleMerge as ^ 
     {
-        withRLEArray* `[RLE]',
+        withRLEs* `[RLE]',
         withRLE* `RLE',
         `Int',
         `Bool'
@@ -107,7 +138,7 @@ rleEncode m h w n = do
 
 {#fun rleArea as rleArea_
     {
-        withRLEArray* `[RLE]',
+        withRLEs* `[RLE]',
         `Int',
         id `Ptr CUInt'
     } -> `()'
@@ -121,8 +152,8 @@ rleArea r n = do
     
 {#fun rleIou as rleIou_
     {
-        withRLEArray* `[RLE]',
-        withRLEArray* `[RLE]',
+        withRLEs* `[RLE]',
+        withRLEs* `[RLE]',
         `Int',
         `Int',
         svUnsafeWith* `SV.Vector CUChar',
@@ -141,7 +172,7 @@ rleIou dt gt iscrowd = do
 
 {#fun rleNms as rleNms_
     {
-        withRLEArray* `[RLE]',
+        withRLEs* `[RLE]',
         `Int',
         id `Ptr CUInt',
         `CDouble'
@@ -195,7 +226,7 @@ bbNms (BB dt) thr = do
 
 {#fun rleToBbox as rleToBbox_
     {
-        withRLEArray* `[RLE]',
+        withRLEs* `[RLE]',
         `PtrBB',
         `Int'
     } -> `()'
@@ -221,9 +252,8 @@ rleToBbox r = do
 rleFrBbox :: BB -> Int -> Int -> IO [RLE]
 rleFrBbox (BB bb) h w = do
     let n = SV.length bb
-    allocaArray n $ \(pr :: Ptr RLE) -> svUnsafeWith bb $ \pbb -> do
-        rleFrBbox_ (castPtr pr) (castPtr pbb) h w n
-        peekArray n pr
+    makeRLEs n $ \prles -> svUnsafeWith bb $ \pbb -> do
+        rleFrBbox_ prles (castPtr pbb) h w n
 
 {#fun rleFrPoly as rleFrPoly_
     {
@@ -238,27 +268,33 @@ rleFrBbox (BB bb) h w = do
 rleFrPoly :: SV.Vector (CDouble, CDouble) -> Int -> Int -> IO RLE
 rleFrPoly xy h w = do
     let k = SV.length xy
-    allocaRLE $ \prle -> svUnsafeWith xy $ \pxy -> do
+    makeRLE $ \prle -> svUnsafeWith xy $ \pxy -> do
         rleFrPoly_ prle (castPtr pxy) k h w
-        peekRLE prle 
 
-{#fun rleToString as rleToString_
+{#fun rleToString as ^
     {
         withRLE* `RLE'
-    } -> `String' peekAndFreeCString*
+    } -> `BS.ByteString' peekAndFreeCString*
 #}
 
-peekAndFreeCString :: Ptr CChar -> IO String
+peekAndFreeCString :: Ptr CChar -> IO BS.ByteString
 peekAndFreeCString cstr = do
-    hstr <- peekCString cstr
+    hstr <- BS.packCString cstr
     free cstr
     return hstr
 
-{#fun rleFrString as ^
+{#fun rleFrString as rleFrString_
     {
-        allocaRLE- `RLE' peekRLE*,
-        `String',
+        `Ptr ()',
+        withByteString* `BS.ByteString',
         `Int',
         `Int'
     } -> `()'
 #}
+
+rleFrString :: BS.ByteString -> Int -> Int -> IO RLE
+rleFrString bs h w = do
+    makeRLE $ (\pr -> rleFrString_ pr bs h w)
+
+withByteString :: BS.ByteString -> (CString -> IO a) -> IO a
+withByteString = BS.useAsCString
