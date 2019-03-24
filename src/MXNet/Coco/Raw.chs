@@ -49,8 +49,10 @@ withRLE :: RLE -> (Ptr () -> IO a) -> IO a
 withRLE rle = withRLEs [rle]
 
 withRLEs :: [RLE] -> (Ptr () -> IO a) -> IO a
-withRLEs rles a = do
-    let num = length rles
+withRLEs rles = withRLEsLen (length rles) rles
+
+withRLEsLen :: Int -> [RLE] -> (Ptr () -> IO a) -> IO a
+withRLEsLen num rles a = do
     allocaBytesAligned (num * {#sizeof RLE#}) {#alignof RLE#} $ \prles -> do
         go prles rles
         ret <- a prles
@@ -105,36 +107,45 @@ rleFree rle = finalizeForeignPtr (_rle_cnts rle)
     } -> `()'
 #}
   
-rleEncode :: BS.ByteString -> Int -> Int -> Int -> IO [RLE]
+rleEncode :: SV.Vector CUChar -> Int -> Int -> Int -> IO [RLE]
 rleEncode m h w n = do
     makeRLEs n (\ prle ->
-        withByteString m (\pm -> do 
+        svUnsafeWith m (\pm -> do 
             rleEncode_ prle (castPtr pm) h w n))
 
 {#fun rleDecode as rleDecode_
     {
-        withRLEs* `[RLE]',
+        `Ptr ()',
         id `Ptr CUChar',
         `Int'
     } -> `()'
 #}
 
-rleDecode :: [RLE] -> Int -> Int -> IO BS.ByteString
+rleDecode :: [RLE] -> Int -> Int -> IO (SV.Vector CUChar)
 rleDecode rles h w = do
     let n = length rles 
         size = n * h * w
-    allocaBytes size $ (\ptr -> do
-        rleDecode_ rles ptr n
-        BS.packCStringLen (castPtr ptr, size))
+    mv <- SVM.new size
+    SVM.unsafeWith mv $ (\ptr -> do
+        withRLEsLen n rles $ \prles -> do
+            rleDecode_ prles ptr n)
+    SV.unsafeFreeze mv
 
-{#fun rleMerge as ^ 
+{#fun rleMerge as rleMerge_
     {
-        withRLEs* `[RLE]',
-        withRLE* `RLE',
+        `Ptr ()',
+        `Ptr ()',
         `Int',
         `Bool'
     } -> `()'
 #}
+
+rleMerge :: [RLE] -> Bool -> IO RLE
+rleMerge rles intersect = do
+    let num = length rles
+    withRLEsLen num rles $ \prles -> 
+        makeRLE $ \porle ->
+            rleMerge_ prles porle num intersect
 
 {#fun rleArea as rleArea_
     {
@@ -144,16 +155,16 @@ rleDecode rles h w = do
     } -> `()'
 #}
 
-rleArea :: [RLE] -> Int -> IO [Int]
+rleArea :: [RLE] -> Int -> IO [CUInt]
 rleArea r n = do
     allocaArray n (\pa -> do
         rleArea_ r n pa
-        map fromIntegral <$> peekArray n pa)
+        peekArray n pa)
     
 {#fun rleIou as rleIou_
     {
-        withRLEs* `[RLE]',
-        withRLEs* `[RLE]',
+        `Ptr ()',
+        `Ptr ()',
         `Int',
         `Int',
         svUnsafeWith* `SV.Vector CUChar',
@@ -161,14 +172,17 @@ rleArea r n = do
     } -> `()'
 #}
 
-rleIou :: [RLE] -> [RLE] -> [Int] -> IO [Double]
+rleIou :: [RLE] -> [RLE] -> [Bool] -> IO ((Int,Int), [Double])
 rleIou dt gt iscrowd = do
     let m = length dt
         n = length gt
         c = length iscrowd
-    assert (n == c) $ allocaArray (m*n) $ \po -> do
-        rleIou_ dt gt m n (SV.fromList $ map fromIntegral iscrowd) po
-        map realToFrac <$> peekArray (m * n) po
+    assert (n == c) $ allocaArray (m*n) $ \po -> 
+        withRLEsLen m dt $ \pdt -> 
+        withRLEsLen n gt $ \pgt -> do 
+            rleIou_ pdt pgt m n (SV.fromList $ map (toEnum . fromEnum) iscrowd) po
+            raw <- peekArray (m * n) po
+            return $ ((m,n), map realToFrac raw)
 
 {#fun rleNms as rleNms_
     {
@@ -197,15 +211,16 @@ rleNms dt thr = do
     } -> `()'
 #}
 
-bbIou :: BB -> BB -> [Int] -> IO [Double]
+bbIou :: BB -> BB -> [Bool] -> IO ((Int,Int), [Double])
 bbIou (BB dt) (BB gt) iscrowd = do
     let m = SV.length dt
         n = SV.length gt
         c = length iscrowd
     assert (n == c) $ allocaArray (m*n) $ \po ->
         svUnsafeWith dt $ \pdt -> svUnsafeWith gt $ \pgt -> do
-            bbIou_ (castPtr pdt) (castPtr pgt) m n (SV.fromList $ map fromIntegral iscrowd) po
-            map realToFrac <$> peekArray (m * n) po
+            bbIou_ (castPtr pdt) (castPtr pgt) m n (SV.fromList $ map (toEnum . fromEnum) iscrowd) po
+            raw <- peekArray (m * n) po
+            return $ ((m,n), map realToFrac raw)
 
 {#fun bbNms as bbNms_
     {
@@ -237,7 +252,7 @@ rleToBbox r = do
     let n = length r
     mbb <- SVM.new n
     SVM.unsafeWith mbb $ \pbb -> rleToBbox_ r (castPtr pbb) n
-    BB <$> SV.freeze mbb
+    BB <$> SV.unsafeFreeze mbb
 
 {#fun rleFrBbox as rleFrBbox_
     {
