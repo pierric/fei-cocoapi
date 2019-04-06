@@ -1,2 +1,0 @@
-module MXNet.Coco where
-
