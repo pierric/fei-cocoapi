@@ -1,26 +1,26 @@
 {-# LANGUAGE TemplateHaskell #-}
 module MXNet.NN.DataIter.Coco where
 
-import Data.Word
+import Data.Maybe (catMaybes)
 import System.FilePath
 import System.Directory
 import GHC.Generics (Generic)
 import qualified Data.ByteString as SBS
 import qualified Data.Store as Store
 import Control.Exception
-import Data.Array.Repa hiding ((++))
+import Data.Array.Repa (Array, DIM1, DIM3, D, U, (:.)(..), Z (..), Any(..),
+    fromListUnboxed, extent, backpermute, extend, (-^), (+^), (*^), (/^))
+import qualified Data.Array.Repa as Repa
+import Data.Array.Repa.Repr.Unboxed (Unbox)
 import qualified Data.Vector as V
-import qualified Data.Vector.Unboxed as UV
 import qualified Codec.Picture.Repa as RPJ
 import Codec.Picture
-import Codec.Picture.Types
 import Codec.Picture.Extra
 import qualified Data.Aeson as Aeson
 import Control.Lens ((^.), view, makeLenses)
 import Data.Conduit
 import qualified Data.Conduit.Combinators as C
 import Control.Monad.Reader
-
 
 import MXNet.NN.DataIter.Conduit
 import MXNet.Coco.Types
@@ -55,9 +55,9 @@ coco base datasplit = cached (datasplit ++ ".store") $ do
     inst <- raiseLeft (FileNotFound annotationFile) <$> Aeson.eitherDecodeFileStrict' annotationFile
     return $ Coco base datasplit inst
 
-type ImageTensor = Array D DIM3 Word8
+type ImageTensor = Array D DIM3 Float
 type ImageInfo = Array U DIM1 Float
-type GTBoxes = Array U DIM2 Float
+type GTBoxes = V.Vector (Array U DIM1 Float)
 
 data Configuration = Configuration {
     _conf_short :: Int,
@@ -70,31 +70,31 @@ makeLenses ''Configuration
 cocoImages :: (MonadReader Configuration m, MonadIO m) => Coco -> ConduitData m (ImageTensor, ImageInfo, GTBoxes)
 cocoImages (Coco base datasplit inst) = ConduitData $ C.yieldMany (inst ^. images) .| C.mapM loadImg
   where
-    tupleToRepa (a, b, c) = fromListUnboxed (Z :. (3 :: Int)) [a,b,c]
-    dropAlpha tensor = 
-        let Z :. _ :. w :. h = extent tensor
-        in fromFunction (Z :. (3 :: Int) :. w :. h) (tensor !)
+    -- dropAlpha tensor = 
+    --     let Z :. _ :. w :. h = extent tensor
+    --     in fromFunction (Z :. (3 :: Int) :. w :. h) (tensor Repa.!)
     loadImg img = do
         short <- view conf_short
         maxSize <- view conf_max_size
-        mean <- view conf_mean
-        std <- view conf_std
-        let meanRepa = tupleToRepa mean
-            stdRepa  = tupleToRepa std
-            imgFilePath = base </> datasplit </> img ^. img_file_name
+
+        let imgFilePath = base </> datasplit </> img ^. img_file_name
         imgDyn <- raiseLeft (FileNotFound imgFilePath) <$> liftIO (readImage imgFilePath)
+        
         let imgRGB = convertRGB8 imgDyn
             imgH = fromIntegral $ imageHeight imgRGB
             imgW = fromIntegral $ imageWidth imgRGB
 
             scale = calcScale imgW imgH short maxSize
-            imgInfo = fromListUnboxed (Z :. 3) [imgH, imgW, scale]
+            imgH' = floor $ scale * imgH
+            imgW' = floor $ scale * imgW
+            imgInfo = fromListUnboxed (Z :. 3) [fromIntegral imgH', fromIntegral imgW', scale]
 
-            imgResized = scaleBilinear (floor $ scale * imgW) (floor $ scale * imgH) imgRGB
+            imgResized = scaleBilinear imgW' imgH' imgRGB
             imgRGBRepa = RPJ.imgData (RPJ.convertImage imgResized :: RPJ.Img RPJ.RGB)
-            imgTrans = transform imgRGBRepa
 
             gt_boxes = get_gt_boxes scale img
+
+        imgTrans <- transform (Repa.map fromIntegral imgRGBRepa)
         return $ (imgTrans, imgInfo, gt_boxes)
 
     -- find a proper scale factor
@@ -106,13 +106,12 @@ cocoImages (Coco base datasplit inst) = ConduitData $ C.yieldMany (inst ^. image
       in if round (imScale0 * imSizeMax) > maxSize then imScale1 else imScale0
 
     -- get all the bbox and gt for the image
-    get_gt_boxes scale img = fromUnboxed (Z :. (UV.length gtBoxes `div` 5) :. 5) gtBoxes
+    get_gt_boxes scale img = V.fromList $ catMaybes $ map makeGTBox $ V.toList imgAnns
       where
         imageId = img ^. img_id
         width   = img ^. img_width
         height  = img ^. img_height
         imgAnns = V.filter (\ann -> ann ^. ann_image_id == imageId) (inst ^. annotations)
-        gtBoxes = UV.concat $ V.toList $ V.map makeGTBox imgAnns
 
         cleanBBox (x, y, w, h) = 
           let x0 = max 0 x
@@ -126,17 +125,38 @@ cocoImages (Coco base datasplit inst) = ConduitData $ C.yieldMany (inst ^. image
               catId = ann ^. ann_category_id 
           in
           if ann ^. ann_area > 0 && x1 > x0 && y1 > y0 
-            then UV.fromList [x0*scale,y0*scale,x1*scale,y1*scale,fromIntegral catId]
-            else UV.empty
+            then Just $ fromListUnboxed (Z :. 5) [x0*scale,y0*scale,x1*scale,y1*scale,fromIntegral catId]
+            else Nothing
 
 -- transform HWC -> CHW
-transform img = backpermute newShape (\ (Z :. c :. h :. w) -> Z :. h :. w :. c) img
+transform :: (Repa.Source r Float, MonadReader Configuration m) => 
+    Array r DIM3 Float -> m (Array D DIM3 Float)
+transform img = do
+    mean <- view conf_mean
+    std <- view conf_std
+    let broadcast = extend (Any :. height :. width)
+        mean' = broadcast $ fromTuple mean
+        std'  = broadcast $ fromTuple std
+        chnFirst = backpermute newShape (\ (Z :. c :. h :. w) -> Z :. h :. w :. c) img
+    return $ (chnFirst -^ mean') /^ std'
   where 
     (Z :. height :. width :. chn) = extent img
     newShape = Z:. chn :. height :. width
 
 -- transform CHW -> HWC
-transformInv img = backpermute newShape (\ (Z :. h :. w :. c) -> Z :. c :. h :. w) img
+transformInv :: (Repa.Source r Float, MonadReader Configuration m) => 
+    Array r DIM3 Float -> m (Array D DIM3 Float)
+transformInv img = do
+    mean <- view conf_mean
+    std <- view conf_std
+    let broadcast = extend (Any :. height :. width)
+        mean' = broadcast $ fromTuple mean
+        std'  = broadcast $ fromTuple std
+        addMean = img *^ std' +^ mean'
+    return $ backpermute newShape (\ (Z :. h :. w :. c) -> Z :. c :. h :. w) addMean
   where 
     (Z :. chn :. height :. width) = extent img
     newShape = Z :. height :. width :. chn
+
+fromTuple :: Unbox a => (a, a, a) -> Array U (Z :. Int) a
+fromTuple (a, b, c) = fromListUnboxed (Z :. (3 :: Int)) [a,b,c]
