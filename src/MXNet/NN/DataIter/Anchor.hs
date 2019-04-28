@@ -11,6 +11,8 @@ import Data.Random (shuffleN, runRVar, StdRandom(..))
 import Data.Array.Repa (Array, DIM1, DIM2, D, U, (:.)(..), Z (..), All(..), (+^), fromListUnboxed)
 import qualified Data.Array.Repa as Repa
 
+-- import Debug.Trace
+
 type Anchor r = Array r DIM1 Float
 type GTBox r = Array r DIM1 Float
 
@@ -94,9 +96,9 @@ overlapMatrix goodIndices gtBoxes anBoxes = Repa.fromFunction (Z :. width :. hei
             areaU = areaA %! ia + areaG %! ig - areaI
         in if V.elem ia goodIndices && iw > 0 && ih > 0 then areaI / areaU else 0
 
-type Labels  = UV.Vector Int
-type Targets = UV.Vector (Float, Float, Float, Float)
-type Weights = UV.Vector Int
+type Labels  = Repa.Array U DIM1 Float -- UV.Vector Int
+type Targets = Repa.Array U DIM2 Float -- UV.Vector (Float, Float, Float, Float)
+type Weights = Repa.Array U DIM1 Float -- UV.Vector Int
 
 assign :: (MonadReader Configuration m, MonadIO m) => 
     V.Vector (GTBox U) -> Int -> Int -> V.Vector (Anchor U) -> m (Labels, Targets, Weights)
@@ -107,10 +109,13 @@ assign gtBoxes imWidth imHeight anBoxes
             indices <- runRVar (shuffleN (V.length goodIndices) (V.toList goodIndices)) StdRandom
             labels <- UVM.replicate numLabels (-1)
             forM_ indices $ flip (UVM.write labels) 0
-            let targets = UV.replicate numLabels (0, 0, 0, 0)
+            let targets = UV.replicate (numLabels * 4) 0
                 weights = UV.replicate numLabels 0
             labels <- UV.unsafeFreeze labels
-            return (labels, targets, weights)
+            let labelsRepa  = Repa.fromUnboxed (Z:.numLabels) labels
+                targetsRepa = Repa.fromUnboxed (Z:.numLabels:.4) targets
+                weightsRepa = Repa.fromUnboxed (Z:.numLabels) weights
+            return (labelsRepa, targetsRepa, weightsRepa)
 
     | otherwise = do
         _fg_overlap <- view conf_fg_overlap
@@ -119,6 +124,8 @@ assign gtBoxes imWidth imHeight anBoxes
         _fg_num     <- view conf_fg_num
     
         goodIndices <- filterGoodIndices
+
+        -- traceShowM ("#Good Anchors:", V.length goodIndices)
 
         liftIO $ do
             -- TODO filter valid anchor boxes
@@ -130,15 +137,19 @@ assign gtBoxes imWidth imHeight anBoxes
             forM_ [0..numGT-1] $ \i -> do
                 -- let j = UV.maxIndex $ Repa.toUnboxed $ Repa.computeS $ Repa.slice overlaps (Z :. i :. All)
                 let j = argMax overlaps 0 i
+                -- traceShowM $ ("GT -> ", j)
                 UVM.write labels j 1
             
             -- FG anchors that have overlapping with any GT >= thresh
             -- BG anchors that have overlapping with all GT < thresh
             UV.forM_ (UV.indexed $ Repa.toUnboxed $ Repa.foldS max 0 $ Repa.transpose overlaps) $ \(i, m) -> do
                 when (V.elem i goodIndices) $ do
-                    when (m >= _fg_overlap) 
+                    when (m >= _fg_overlap) $ do
+                        -- traceShowM ("FG enable ", m, i)
                         (UVM.write labels i 1)
-                    when (m < _bg_overlap) 
+                    when (m < _bg_overlap) $ do
+                        -- s <- UVM.read labels i
+                        -- when (s == 1) $ traceShowM ("FG disable ", m, i)
                         (UVM.write labels i 0)
 
             -- subsample FG anchors if there are too many
@@ -146,6 +157,7 @@ assign gtBoxes imWidth imHeight anBoxes
             let numFG = UV.length fgs
             when (numFG > _fg_num) $ do
                 indices <- runRVar (shuffleN numFG $ UV.toList fgs) StdRandom
+                -- traceShowM ("Disable A", take (numFG - _fg_num) indices)
                 forM_ (take (numFG - _fg_num) indices) $
                     flip (UVM.write labels) (-1)
 
@@ -155,6 +167,7 @@ assign gtBoxes imWidth imHeight anBoxes
                 maxBG = _batch_num - min numFG _fg_num
             when (numBG > maxBG) $ do
                 indices <- runRVar (shuffleN numBG $ UV.toList bgs) StdRandom
+                -- traceShowM ("Disable B", take (numBG - maxBG) indices)
                 forM_ (take (numBG - maxBG) indices) $ 
                     flip (UVM.write labels) (-1)
 
@@ -172,7 +185,10 @@ assign gtBoxes imWidth imHeight anBoxes
             labels  <- UV.unsafeFreeze labels
             targets <- UV.unsafeFreeze targets
             weights <- UV.unsafeFreeze weights 
-            return (labels, targets, weights)
+            let labelsRepa  = Repa.fromUnboxed (Z:.numLabels) labels
+                targetsRepa = Repa.fromUnboxed (Z:.numLabels:.4) (flattenT targets)
+                weightsRepa = Repa.fromUnboxed (Z:.numLabels) weights
+            return (labelsRepa, targetsRepa, weightsRepa)
   where
     numGT = V.length gtBoxes
     numLabels = V.length anBoxes
@@ -209,6 +225,10 @@ assign gtBoxes imWidth imHeight anBoxes
             dw = log (w2 / w1)
             dh = log (h2 / h1)
         in (dx, dy, dw, dh)
+
+    -- TODO: make it without any copy
+    flattenT :: UV.Vector (Float, Float, Float, Float) -> UV.Vector Float
+    flattenT = UV.concatMap (\(a,b,c,d) -> UV.fromList [a,b,c,d])
 
 data AnchorError = BadDimension
   deriving Show

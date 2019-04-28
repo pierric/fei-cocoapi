@@ -64,9 +64,9 @@ main = do
         width  = img ^. img_width
     
     store "./imgs.store" $ inst ^. images
-
     store "./anns.store" $ inst ^. annotations
-    print (width, height)
+    store "./cats.store" $ inst ^. categories
+    
 
     -- putStrLn $ show imgId
 
