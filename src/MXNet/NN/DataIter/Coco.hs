@@ -26,7 +26,8 @@ import qualified Data.Conduit.Combinators as C (yieldMany)
 import qualified Data.Conduit.List as C
 import Control.Monad.Reader
 
-import MXNet.Base (NDArray(..), Fullfilled, ArgsHMap, ParameterList, Attr(..), (!), (!?), fromVector)
+import MXNet.Base (NDArray(..), Fullfilled, ArgsHMap, ParameterList, Attr(..), (!), (!?), (.&), HMap(..), ArgOf(..), fromVector)
+import MXNet.Base.Operators.NDArray (_Reshape)
 import MXNet.NN.DataIter.Conduit
 import qualified MXNet.NN.DataIter.Anchor as Anchor
 import MXNet.Coco.Types
@@ -242,7 +243,7 @@ cocoImagesWithAnchors cocoDef args = ConduitData $ do
         convert :: Repa.Shape sh => [Array U sh Float] -> ([Int], UV.Vector Float)
         convert xs = 
             let x0 = head xs
-                ext = batchSize : (Repa.listOfShape $ Repa.extent x0)
+                ext = length xs : (reverse $ Repa.listOfShape $ Repa.extent x0)
             in (ext, UV.concat $ map Repa.toUnboxed xs)
 
         convertToMX :: Repa.Shape sh => [Array U sh Float] -> IO (NDArray Float)
@@ -251,4 +252,4 @@ cocoImagesWithAnchors cocoDef args = ConduitData $ do
         -- shape, at the type level, are sequence of Int, although we wnat to append
         -- a dimension at the head, we add Int at the tail, they are the same.
         convertToRepa :: Repa.Shape sh => [Array U sh Float] -> Array U (sh :. Int) Float
-        convertToRepa = uncurry Repa.fromUnboxed . (_1 %~ Repa.shapeOfList) . convert
+        convertToRepa = uncurry Repa.fromUnboxed . (_1 %~ Repa.shapeOfList . reverse) . convert
