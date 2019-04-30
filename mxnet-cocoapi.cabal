@@ -54,6 +54,7 @@ Library
                           , directory
                           , random-fu
                           , mxnet-base
+                          , mxnet-ops
                           , mxnet-dataiter
     extra-libraries:     mxnet
     Build-tools:         c2hs
