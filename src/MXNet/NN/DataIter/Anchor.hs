@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module MXNet.NN.DataIter.Anchor where
 
+import qualified Data.IntSet as Set
 import Control.Exception
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as UV
@@ -77,7 +78,7 @@ mkanchor x y w h = fromListUnboxed (Z :. 4) [x - hW, y - hH, x + hW, y + hH]
 (%!) :: V.Vector a -> Int -> a
 (%!) = (V.!)
 
-overlapMatrix :: V.Vector Int -> V.Vector (GTBox U) -> V.Vector (Anchor U) -> Array D DIM2 Float
+overlapMatrix :: Set.IntSet -> V.Vector (GTBox U) -> V.Vector (Anchor U) -> Array D DIM2 Float
 overlapMatrix goodIndices gtBoxes anBoxes = Repa.fromFunction (Z :. width :. height) calcOvp
   where
     width = V.length gtBoxes
@@ -94,7 +95,7 @@ overlapMatrix goodIndices gtBoxes anBoxes = Repa.fromFunction (Z :. width :. hei
             ih = min (gt #! 3) (anchor #! 3) - max (gt #! 1) (anchor #! 1)
             areaI = iw * ih
             areaU = areaA %! ia + areaG %! ig - areaI
-        in if V.elem ia goodIndices && iw > 0 && ih > 0 then areaI / areaU else 0
+        in if Set.member ia goodIndices && iw > 0 && ih > 0 then areaI / areaU else 0
 
 type Labels  = Repa.Array U DIM1 Float -- UV.Vector Int
 type Targets = Repa.Array U DIM2 Float -- UV.Vector (Float, Float, Float, Float)
@@ -106,7 +107,7 @@ assign gtBoxes imWidth imHeight anBoxes
     | numGT == 0 = do
         goodIndices <- filterGoodIndices
         liftIO $ do
-            indices <- runRVar (shuffleN (V.length goodIndices) (V.toList goodIndices)) StdRandom
+            indices <- runRVar (shuffleN (Set.size goodIndices) (Set.toList goodIndices)) StdRandom
             labels <- UVM.replicate numLabels (-1)
             forM_ indices $ flip (UVM.write labels) 0
             let targets = UV.replicate (numLabels * 4) 0
@@ -143,7 +144,7 @@ assign gtBoxes imWidth imHeight anBoxes
             -- FG anchors that have overlapping with any GT >= thresh
             -- BG anchors that have overlapping with all GT < thresh
             UV.forM_ (UV.indexed $ Repa.toUnboxed $ Repa.foldS max 0 $ Repa.transpose overlaps) $ \(i, m) -> do
-                when (V.elem i goodIndices) $ do
+                when (Set.member i goodIndices) $ do
                     when (m >= _fg_overlap) $ do
                         -- traceShowM ("FG enable ", m, i)
                         (UVM.write labels i 1)
@@ -204,7 +205,7 @@ assign gtBoxes imWidth imHeight anBoxes
     asTuple :: Array U DIM1 Float -> (Float, Float, Float, Float)
     asTuple box = (box #! 0, box #! 1, box #! 2, box #! 3)
 
-    filterGoodIndices :: MonadReader Configuration m => m (V.Vector Int)
+    filterGoodIndices :: MonadReader Configuration m => m Set.IntSet
     filterGoodIndices = do
         _allowed_border <- fromIntegral <$> view conf_allowed_border
         let goodAnchor (x0, y0, x1, y1) =
@@ -212,7 +213,7 @@ assign gtBoxes imWidth imHeight anBoxes
                 y0 >= -_allowed_border &&
                 x1 < fromIntegral imWidth + _allowed_border &&
                 y1 < fromIntegral imHeight + _allowed_border    
-        return $ V.findIndices (goodAnchor . asTuple) anBoxes
+        return $ Set.fromList $ V.toList $ V.findIndices (goodAnchor . asTuple) anBoxes
 
     makeTarget :: Int -> Int -> (Float, Float, Float, Float)
     makeTarget fgi gti = 

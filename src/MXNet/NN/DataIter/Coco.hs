@@ -190,10 +190,10 @@ type instance ParameterList "CocoImagesWithAnchors" =
 
 cocoImagesWithAnchors :: (Fullfilled "CocoImagesWithAnchors" args, MonadIO m) =>
     Coco -> ArgsHMap "CocoImagesWithAnchors" args -> 
-    ConduitData m ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
-cocoImagesWithAnchors cocoDef args = ConduitData $ do
+    m (V.Vector (Anchor.Anchor U), ConduitData m ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float)))
+cocoImagesWithAnchors cocoDef args = do
     anchors <- runReaderT (Anchor.anchors featureStride featureWidth featureHeight) anchConf
-    morf imgs .| C.mapM (assignAnchors anchConf anchors) .| C.chunksOf batchSize .| C.mapM toNDArray
+    return (anchors, ConduitData $ morf imgs .| C.mapM (assignAnchors anchConf anchors) .| C.chunksOf batchSize .| C.mapM toNDArray)
   where
     ConduitData imgs = cocoImages cocoDef
     cocoConf = Configuration {
@@ -213,8 +213,8 @@ cocoImagesWithAnchors cocoDef args = ConduitData $ do
         Anchor._conf_allowed_border = fromMaybe 0 $ args !? #allowed_border,
         Anchor._conf_fg_num         = floor $ (fromMaybe 0.5 $ args !? #fg_fraction) * fromIntegral batchRois,
         Anchor._conf_batch_num      = batchRois,
-        Anchor._conf_bg_overlap     = fromMaybe 0.7 $ args !? #fg_overlap,
-        Anchor._conf_fg_overlap     = fromMaybe 0.3 $ args !? #bg_overlap
+        Anchor._conf_fg_overlap     = fromMaybe 0.7 $ args !? #fg_overlap,
+        Anchor._conf_bg_overlap     = fromMaybe 0.3 $ args !? #bg_overlap
     }
 
     morf = transPipe (flip runReaderT cocoConf)
@@ -222,8 +222,8 @@ cocoImagesWithAnchors cocoDef args = ConduitData $ do
     assignAnchors :: MonadIO m => Anchor.Configuration -> V.Vector (Anchor.Anchor U) -> (ImageTensor, ImageInfo, GTBoxes) ->
         m (ImageTensor, ImageInfo, GTBoxes, Anchor.Labels, Anchor.Targets, Anchor.Weights) 
     assignAnchors conf anchors (img, info, gt) = do
-        let imWidth  = floor $ info Anchor.#! 0
-            imHeight = floor $ info Anchor.#! 1
+        let imHeight = floor $ info Anchor.#! 0
+            imWidth  = floor $ info Anchor.#! 1
         (lbls, targets, weights) <- runReaderT (Anchor.assign gt imWidth imHeight anchors) conf
         return (img, info, gt, lbls, targets, weights)
 
