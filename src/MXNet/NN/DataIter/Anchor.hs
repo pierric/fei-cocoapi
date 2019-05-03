@@ -24,7 +24,7 @@ data Configuration = Configuration {
     _conf_batch_num :: Int,
     _conf_bg_overlap :: Float,
     _conf_fg_overlap :: Float
-}
+} deriving Show
 makeLenses ''Configuration
 
 anchors :: MonadReader Configuration m => 
