@@ -230,17 +230,31 @@ cocoImagesWithAnchors cocoDef extractFeatureShape args = ConduitData (Just batch
 
         (lbls, targets, weights) <- runReaderT (Anchor.assign gt imWidth imHeight anchors) conf
 
-        -- reshape and transpose labls   from (feat_w * feat_h * #anch,  ) to (#anch,     feat_w, feat_h)
-        -- reshape and transpose targets from (feat_w * feat_h * #anch, 4) to (#anch * 4, feat_w, feat_h)
-        -- reshape and transpose weights from (feat_w * feat_h * #anch, 4) to (#anch * 4, feat_w, feat_h)
+        -- reshape and transpose labls   from (feat_h * feat_w * #anch,  ) to (#anch,     feat_h, feat_w)
+        -- reshape and transpose targets from (feat_h * feat_w * #anch, 4) to (#anch * 4, feat_h, feat_w)
+        -- reshape and transpose weights from (feat_h * feat_w * #anch, 4) to (#anch * 4, feat_h, feat_w)
         let numAnch = length (anchConf ^. Anchor.conf_anchor_scales) * length (anchConf ^. Anchor.conf_anchor_ratios)
-            cvt1 (Z :. i :. w :. h) = Z :. ((h * featureWidth + w) * numAnch + i)
-            cvt2 (Z :. i :. w :. h) = let (m, n) = divMod i 4
-                                      in Z :. ((h * featureWidth + w) * numAnch + m) :. n
-        lbls    <- Repa.computeP $ Repa.reshape (Z :. numAnch * featureWidth * featureHeight) $ 
-                        Repa.backpermute (Z :. numAnch :. featureWidth :. featureHeight) cvt1 lbls
-        targets <- Repa.computeP $ Repa.backpermute (Z :. numAnch * 4 :. featureWidth :. featureHeight) cvt2 targets
-        weights <- Repa.computeP $ Repa.backpermute (Z :. numAnch *4  :. featureWidth :. featureHeight) cvt2 weights 
+        lbls    <- Repa.computeP $ 
+                    Repa.reshape (Z :. numAnch * featureHeight * featureWidth) $ 
+                    Repa.transpose $ 
+                    Repa.reshape (Z :. featureHeight * featureWidth :. numAnch) lbls
+        targets <- Repa.computeP $ 
+                    Repa.reshape (Z :. numAnch * 4 :. featureHeight :. featureWidth) $
+                    Repa.transpose $
+                    Repa.reshape (Z :. featureHeight * featureWidth :. numAnch * 4) targets
+        weights <- Repa.computeP $ 
+                    Repa.reshape (Z :. numAnch * 4 :. featureHeight :. featureWidth) $
+                    Repa.transpose $
+                    Repa.reshape (Z :. featureHeight * featureWidth :. numAnch * 4) weights
+
+        -- let numAnch = length (anchConf ^. Anchor.conf_anchor_scales) * length (anchConf ^. Anchor.conf_anchor_ratios)
+        --     cvt1 (Z :. i :. h :. w) = Z :. ((h * featureWidth + w) * numAnch + i)
+        --     cvt2 (Z :. i :. h :. w) = let (m, n) = divMod i 4
+        --                               in Z :. ((h * featureWidth + w) * numAnch + m) :. n
+        -- lbls    <- Repa.computeP $ Repa.reshape (Z :. numAnch * featureHeight :. featureWidth) $ 
+        --                 Repa.backpermute (Z :. numAnch :. featureHeight :. featureWidth) cvt1 lbls
+        -- targets <- Repa.computeP $ Repa.backpermute (Z :. numAnch * 4 :. featureHeight :. featureWidth) cvt2 targets
+        -- weights <- Repa.computeP $ Repa.backpermute (Z :. numAnch *4  :. featureHeight :. featureWidth) cvt2 weights 
 
         return (img, info, gt, lbls, targets, weights)
 

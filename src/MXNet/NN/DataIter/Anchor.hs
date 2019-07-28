@@ -36,8 +36,8 @@ anchors stride width height = do
     base   <- baseAnchors stride
     return $ V.fromList 
         [ Repa.computeS $ anch +^ offs
-        | offX <- grid width
-        , offY <- grid height
+        | offY <- grid height
+        , offX <- grid width
         , anch <- base 
         , let offs = fromListUnboxed (Z :. 4) [offX, offY, offX, offY]]
   where
