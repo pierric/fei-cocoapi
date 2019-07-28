@@ -99,7 +99,7 @@ overlapMatrix goodIndices gtBoxes anBoxes = Repa.fromFunction (Z :. width :. hei
 
 type Labels  = Repa.Array U DIM1 Float -- UV.Vector Int
 type Targets = Repa.Array U DIM2 Float -- UV.Vector (Float, Float, Float, Float)
-type Weights = Repa.Array U DIM1 Float -- UV.Vector Int
+type Weights = Repa.Array U DIM2 Float -- UV.Vector (Float, Float, Float, Float)
 
 assign :: (MonadReader Configuration m, MonadIO m) => 
     V.Vector (GTBox U) -> Int -> Int -> V.Vector (Anchor U) -> m (Labels, Targets, Weights)
@@ -111,11 +111,11 @@ assign gtBoxes imWidth imHeight anBoxes
             labels <- UVM.replicate numLabels (-1)
             forM_ indices $ flip (UVM.write labels) 0
             let targets = UV.replicate (numLabels * 4) 0
-                weights = UV.replicate numLabels 0
+                weights = UV.replicate (numLabels * 4) 0
             labels <- UV.unsafeFreeze labels
             let labelsRepa  = Repa.fromUnboxed (Z:.numLabels) labels
                 targetsRepa = Repa.fromUnboxed (Z:.numLabels:.4) targets
-                weightsRepa = Repa.fromUnboxed (Z:.numLabels) weights
+                weightsRepa = Repa.fromUnboxed (Z:.numLabels:.4) weights
             return (labelsRepa, targetsRepa, weightsRepa)
 
     | otherwise = do
@@ -180,15 +180,15 @@ assign gtBoxes imWidth imHeight anBoxes
             UV.zipWithM_ (UVM.write targets) fgs gtDiffs
             
             -- indicates which anchors have a regression 
-            weights <- UVM.replicate numLabels 0
-            UV.forM_ fgs $ flip (UVM.write weights) 1
+            weights <- UVM.replicate numLabels (0, 0, 0, 0)
+            UV.forM_ fgs $ flip (UVM.write weights) (1, 1, 1, 1)
 
             labels  <- UV.unsafeFreeze labels
             targets <- UV.unsafeFreeze targets
             weights <- UV.unsafeFreeze weights 
             let labelsRepa  = Repa.fromUnboxed (Z:.numLabels) labels
                 targetsRepa = Repa.fromUnboxed (Z:.numLabels:.4) (flattenT targets)
-                weightsRepa = Repa.fromUnboxed (Z:.numLabels) weights
+                weightsRepa = Repa.fromUnboxed (Z:.numLabels:.4) (flattenT weights)
             return (labelsRepa, targetsRepa, weightsRepa)
   where
     numGT = V.length gtBoxes
