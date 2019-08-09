@@ -48,7 +48,7 @@ baseAnchors :: MonadReader Configuration m =>
 baseAnchors size = do
     scales <- view conf_anchor_scales
     ratios <- view conf_anchor_ratios
-    return [makeBase s r | s <- scales, r <- ratios]
+    return [makeBase s r | r <- ratios, s <- scales]
   where
     makeBase :: Int -> Float -> Anchor U
     makeBase scale ratio = 

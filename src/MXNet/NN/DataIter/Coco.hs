@@ -30,6 +30,8 @@ import Data.Conduit
 import qualified Data.Conduit.Combinators as C (yieldMany)
 import qualified Data.Conduit.List as C
 import Control.Monad.Reader
+import qualified Data.IntMap.Strict as M
+import Data.Maybe (fromJust)
 
 import MXNet.Base (NDArray(..), Fullfilled, ArgsHMap, ParameterList, Attr(..), (!), (!?), (.&), HMap(..), ArgOf(..), fromVector,zeros)
 import MXNet.Base.Operators.NDArray (_Reshape)
@@ -118,6 +120,9 @@ cocoImages (Coco base datasplit inst) = ConduitData (Just 1) $ C.yieldMany (inst
           imScale1 = fromIntegral maxSize / imSizeMax :: Float
       in if round (imScale0 * imSizeMax) > maxSize then imScale1 else imScale0
 
+    -- map each category from id to its index in the cocoClassNames.
+    catTabl = M.fromList $ V.toList $ V.map (\cat -> (cat ^. odc_id, fromJust $ V.elemIndex (cat ^. odc_name) cocoClassNames)) (inst ^. categories)
+
     -- get all the bbox and gt for the image
     get_gt_boxes scale img = V.fromList $ catMaybes $ map makeGTBox $ V.toList imgAnns
       where
@@ -134,11 +139,12 @@ cocoImages (Coco base datasplit inst) = ConduitData (Just 1) $ C.yieldMany (inst
           in (x0, y0, x1, y1)
 
         makeGTBox ann =
-          let (x0,y0,x1,y1) = cleanBBox (ann ^. ann_bbox)
-              catId = ann ^. ann_category_id
+          let (x0, y0, x1, y1) = cleanBBox (ann ^. ann_bbox)
+              classId = catTabl M.! (ann ^. ann_category_id)
+              
           in
           if ann ^. ann_area > 0 && x1 > x0 && y1 > y0
-            then Just $ fromListUnboxed (Z :. 5) [x0*scale,y0*scale,x1*scale,y1*scale,fromIntegral catId]
+            then Just $ fromListUnboxed (Z :. 5) [x0*scale, y0*scale, x1*scale, y1*scale, fromIntegral classId]
             else Nothing
 
 
@@ -175,6 +181,21 @@ transformInv img = do
 fromTuple :: Unbox a => (a, a, a) -> Array U (Z :. Int) a
 fromTuple (a, b, c) = fromListUnboxed (Z :. (3 :: Int)) [a,b,c]
 
+cocoClassNames = V.fromList [
+    "__background__",  -- always index 0
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
+    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
+    "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
+    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
+    "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
+    "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
+    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+    "couch", "potted plant", "bed", "dining table", "toilet", "tv",
+    "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
+    "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
+    "scissors", "teddy bear", "hair drier", "toothbrush"]
 
 type instance ParameterList "CocoImagesWithAnchors" =
     '[ '("batch_size",     'AttrReq Int),
