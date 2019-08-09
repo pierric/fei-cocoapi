@@ -82,7 +82,7 @@ data Configuration = Configuration {
 makeLenses ''Configuration
 
 cocoImages :: (MonadReader Configuration m, MonadIO m) => Coco -> ConduitData m (ImageTensor, ImageInfo, GTBoxes)
-cocoImages (Coco base datasplit inst) = ConduitData (Just 1) $ C.yieldMany (inst ^. images) .| C.mapM loadImg
+cocoImages (Coco base datasplit inst) = ConduitData (Just 1) $ C.yieldMany (inst ^. images) .| C.mapM loadImg .| C.catMaybes
   where
     -- dropAlpha tensor =
     --     let Z :. _ :. w :. h = extent tensor
@@ -108,9 +108,12 @@ cocoImages (Coco base datasplit inst) = ConduitData (Just 1) $ C.yieldMany (inst
 
             gt_boxes = get_gt_boxes scale img
 
-        imgTrans <- transform (Repa.map fromIntegral imgRGBRepa)
-        imgEval  <- Repa.computeP imgTrans
-        return $ (imgEval, imgInfo, gt_boxes)
+        if V.null gt_boxes 
+            then return Nothing 
+            else do
+                imgTrans <- transform (Repa.map fromIntegral imgRGBRepa)
+                imgEval  <- Repa.computeP imgTrans
+                return $ Just (imgEval, imgInfo, gt_boxes)
 
     -- find a proper scale factor
     calcScale imgW imgH short maxSize =
