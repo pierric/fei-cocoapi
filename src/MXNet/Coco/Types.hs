@@ -75,7 +75,7 @@ data Image = Image {
     _img_flickr_url :: !String, 
     _img_coco_url :: !String,
     _img_date_captured :: !LocalTime
-} deriving Generic
+} deriving (Generic, Show)
 
 deriving instance Generic TimeOfDay
 deriving instance Generic LocalTime

@@ -73,7 +73,7 @@ mkanchor x y w h = fromListUnboxed (Z :. 4) [x - hW, y - hH, x + hW, y + hH]
     hH = 0.5 * (h - 1)
 
 (#!) :: Array U DIM1 Float -> Int -> Float
-(#!) = Repa.linearIndex
+(#!) = Repa.unsafeLinearIndex
 
 (%!) :: V.Vector a -> Int -> a
 (%!) = (V.!)
@@ -133,7 +133,7 @@ assign gtBoxes imWidth imHeight anBoxes
             -- TODO case when gtBoxes is empty.
             labels <- UVM.replicate numLabels (-1)
 
-            overlaps <- Repa.computeUnboxedP $ overlapMatrix goodIndices gtBoxes anBoxes
+            overlaps <- return $ Repa.computeUnboxedS $ overlapMatrix goodIndices gtBoxes anBoxes
             -- for each GT, the hightest overlapping anchor is FG.
             forM_ [0..numGT-1] $ \i -> do
                 -- let j = UV.maxIndex $ Repa.toUnboxed $ Repa.computeS $ Repa.slice overlaps (Z :. i :. All)

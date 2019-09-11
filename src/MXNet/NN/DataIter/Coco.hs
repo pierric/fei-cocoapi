@@ -2,7 +2,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module MXNet.NN.DataIter.Coco (
+    cocoImages,
     cocoImagesWithAnchors,
+    cocoImagesWithAnchors',
     Coco(..),
     coco,
 ) where
@@ -32,6 +34,7 @@ import qualified Data.Conduit.List as C
 import Control.Monad.Reader
 import qualified Data.IntMap.Strict as M
 import Data.Maybe (fromJust)
+import qualified Data.Random as RND (shuffleN, runRVar, StdRandom(..))
 
 import MXNet.Base (NDArray(..), Fullfilled, ArgsHMap, ParameterList, Attr(..), (!), (!?), (.&), HMap(..), ArgOf(..), fromVector,zeros)
 import MXNet.Base.Operators.NDArray (_Reshape)
@@ -81,8 +84,14 @@ data Configuration = Configuration {
 }
 makeLenses ''Configuration
 
-cocoImages :: (MonadReader Configuration m, MonadIO m) => Coco -> ConduitData m (ImageTensor, ImageInfo, GTBoxes)
-cocoImages (Coco base datasplit inst) = ConduitData (Just 1) $ C.yieldMany (inst ^. images) .| C.mapM loadImg .| C.catMaybes
+cocoImages :: (MonadReader Configuration m, MonadIO m) => Coco -> Bool -> ConduitData m (ImageTensor, ImageInfo, GTBoxes)
+cocoImages (Coco base datasplit inst) shuffle = ConduitData (Just 1) $ do
+    let all = inst ^. images
+    all_images <- if shuffle then
+                    liftIO $ RND.runRVar (RND.shuffleN (length all) (V.toList all)) RND.StdRandom 
+                  else
+                    return $ V.toList all
+    C.yieldMany all_images {-- .| C.iterM (liftIO . print) --} .| C.mapM loadImg .| C.catMaybes
   where
     -- dropAlpha tensor =
     --     let Z :. _ :. w :. h = extent tensor
@@ -104,15 +113,15 @@ cocoImages (Coco base datasplit inst) = ConduitData (Just 1) $ C.yieldMany (inst
             imgInfo = fromListUnboxed (Z :. 3) [fromIntegral imgH', fromIntegral imgW', scale]
 
             imgResized = scaleBilinear imgW' imgH' imgRGB
-            imgRGBRepa = RPJ.imgData (RPJ.convertImage imgResized :: RPJ.Img RPJ.RGB)
+            imgRGBRepa = Repa.computeUnboxedS $ RPJ.imgData (RPJ.convertImage imgResized :: RPJ.Img RPJ.RGB)
 
             gt_boxes = get_gt_boxes scale img
 
         if V.null gt_boxes 
             then return Nothing 
             else do
-                imgTrans <- transform (Repa.map fromIntegral imgRGBRepa)
-                imgEval  <- Repa.computeP imgTrans
+                let imgRGBRepa' = Repa.computeUnboxedS $ Repa.map fromIntegral imgRGBRepa
+                imgEval <- transform imgRGBRepa'
                 return $ Just (imgEval, imgInfo, gt_boxes)
 
     -- find a proper scale factor
@@ -152,16 +161,16 @@ cocoImages (Coco base datasplit inst) = ConduitData (Just 1) $ C.yieldMany (inst
 
 
 -- transform HWC -> CHW
-transform :: (Repa.Source r Float, MonadReader Configuration m) =>
-    Array r DIM3 Float -> m (Array D DIM3 Float)
+transform :: MonadReader Configuration m =>
+    Array U DIM3 Float -> m (Array U DIM3 Float)
 transform img = do
     mean <- view conf_mean
     std <- view conf_std
-    let broadcast = extend (Any :. height :. width)
+    let broadcast = Repa.computeUnboxedS . extend (Any :. height :. width)
         mean' = broadcast $ fromTuple mean
         std'  = broadcast $ fromTuple std
         chnFirst = backpermute newShape (\ (Z :. c :. h :. w) -> Z :. h :. w :. c) img
-    return $ (chnFirst -^ mean') /^ std'
+    return $ Repa.computeUnboxedS $ (chnFirst -^ mean') /^ std'
   where
     (Z :. height :. width :. chn) = extent img
     newShape = Z:. chn :. height :. width
@@ -213,24 +222,55 @@ type instance ParameterList "CocoImagesWithAnchors" =
        '("batch_rois",     'AttrOpt Int),
        '("fg_fraction",    'AttrOpt Float),
        '("fg_overlap",     'AttrOpt Float),
-       '("bg_overlap",     'AttrOpt Float)]
+       '("bg_overlap",     'AttrOpt Float),
+       '("shuffle",        'AttrOpt Bool)]
 
-cocoImagesWithAnchors :: (Fullfilled "CocoImagesWithAnchors" args, MonadIO m) =>
-    Coco -> ((Int, Int) -> IO (Int, Int)) -> ArgsHMap "CocoImagesWithAnchors" args -> 
+
+cocoImagesWithAnchors' :: (Fullfilled "CocoImagesWithAnchors" args, MonadIO m) =>
+    ConduitData (ReaderT Configuration m) (ImageTensor, ImageInfo, GTBoxes) -> 
+    ((Int, Int) -> IO (Int, Int)) -> 
+    ArgsHMap "CocoImagesWithAnchors" args -> 
     ConduitData m ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
-cocoImagesWithAnchors cocoDef extractFeatureShape args = ConduitData (Just batchSize) $ 
-    morf imgs .| C.mapM (assignAnchors anchConf) .| C.chunksOf batchSize .| C.mapM toNDArray
-
+cocoImagesWithAnchors' (ConduitData _ images) extractFeatureShape args = ConduitData (Just batchSize) $ 
+    morf images .| C.mapM (assignAnchors anchConf featureStride extractFeatureShape) .| C.chunksOf batchSize .| C.mapM toNDArray
   where
-    ConduitData _ imgs = cocoImages cocoDef
+    batchSize = args ! #batch_size
+    batchRois     = fromMaybe 256 $ args !? #batch_rois
+    featureStride = fromMaybe 16 $ args !? #feature_stride
+    anchConf = Anchor.Configuration {
+        Anchor._conf_anchor_scales  = fromMaybe [8, 16, 32] $ args !? #anchor_scales,
+        Anchor._conf_anchor_ratios  = fromMaybe [0.5, 1, 2] $ args !? #anchor_ratios,
+        Anchor._conf_allowed_border = fromMaybe 0 $ args !? #allowed_border,
+        Anchor._conf_fg_num         = floor $ (fromMaybe 0.5 $ args !? #fg_fraction) * fromIntegral batchRois,
+        Anchor._conf_batch_num      = batchRois,
+        Anchor._conf_fg_overlap     = fromMaybe 0.7 $ args !? #fg_overlap,
+        Anchor._conf_bg_overlap     = fromMaybe 0.3 $ args !? #bg_overlap
+    }
     cocoConf = Configuration {
         _conf_short    = args ! #short_size,
         _conf_max_size = args ! #long_size,
         _conf_mean     = args ! #mean,
         _conf_std      = args ! #std
     }
+    morf = transPipe (flip runReaderT cocoConf)
+
+cocoImagesWithAnchors :: (Fullfilled "CocoImagesWithAnchors" args, MonadIO m) =>
+    Coco -> ((Int, Int) -> IO (Int, Int)) -> ArgsHMap "CocoImagesWithAnchors" args -> 
+    ConduitData m ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
+cocoImagesWithAnchors cocoDef extractFeatureShape args = ConduitData (Just batchSize) $ 
+    morf imgs .| C.mapM (assignAnchors anchConf featureStride extractFeatureShape) .| C.chunksOf batchSize .| C.mapM toNDArray
+
+  where
+    ConduitData _ imgs = cocoImages cocoDef shuffle
+    cocoConf = Configuration {
+        _conf_short    = args ! #short_size,
+        _conf_max_size = args ! #long_size,
+        _conf_mean     = args ! #mean,
+        _conf_std      = args ! #std
+    }
+    shuffle       = fromMaybe True $ args !? #shuffle
     batchSize     = args ! #batch_size
-    batchRois = fromMaybe 256 $ args !? #batch_rois
+    batchRois     = fromMaybe 256 $ args !? #batch_rois
     featureStride = fromMaybe 16 $ args !? #feature_stride
     anchConf = Anchor.Configuration {
         Anchor._conf_anchor_scales  = fromMaybe [8, 16, 32] $ args !? #anchor_scales,
@@ -244,69 +284,69 @@ cocoImagesWithAnchors cocoDef extractFeatureShape args = ConduitData (Just batch
 
     morf = transPipe (flip runReaderT cocoConf)
 
-    assignAnchors :: MonadIO m => Anchor.Configuration -> (ImageTensor, ImageInfo, GTBoxes) ->
-        m (ImageTensor, ImageInfo, GTBoxes, Repa.Array U DIM1 Float, Repa.Array U DIM3 Float, Repa.Array U DIM3 Float) 
-    assignAnchors conf (img, info, gt) = do
-        let imHeight = floor $ info Anchor.#! 0
-            imWidth  = floor $ info Anchor.#! 1
-        (featureWidth, featureHeight) <- liftIO $ extractFeatureShape (imWidth, imHeight)
-        anchors <- runReaderT (Anchor.anchors featureStride featureWidth featureHeight) anchConf
+assignAnchors :: MonadIO m => Anchor.Configuration -> Int -> ((Int, Int) -> IO (Int, Int)) -> (ImageTensor, ImageInfo, GTBoxes) ->
+    m (ImageTensor, ImageInfo, GTBoxes, Repa.Array U DIM1 Float, Repa.Array U DIM3 Float, Repa.Array U DIM3 Float) 
+assignAnchors conf featureStride extractFeatureShape (img, info, gt) = do
+    let imHeight = floor $ info Anchor.#! 0
+        imWidth  = floor $ info Anchor.#! 1
+    (featureWidth, featureHeight) <- liftIO $ extractFeatureShape (imWidth, imHeight)
+    anchors <- runReaderT (Anchor.anchors featureStride featureWidth featureHeight) conf
 
-        (lbls, targets, weights) <- runReaderT (Anchor.assign gt imWidth imHeight anchors) conf
+    (lbls, targets, weights) <- runReaderT (Anchor.assign gt imWidth imHeight anchors) conf
 
-        -- reshape and transpose labls   from (feat_h * feat_w * #anch,  ) to (#anch,     feat_h, feat_w)
-        -- reshape and transpose targets from (feat_h * feat_w * #anch, 4) to (#anch * 4, feat_h, feat_w)
-        -- reshape and transpose weights from (feat_h * feat_w * #anch, 4) to (#anch * 4, feat_h, feat_w)
-        let numAnch = length (anchConf ^. Anchor.conf_anchor_scales) * length (anchConf ^. Anchor.conf_anchor_ratios)
-        lbls    <- Repa.computeP $ 
-                    Repa.reshape (Z :. numAnch * featureHeight * featureWidth) $ 
-                    Repa.transpose $ 
-                    Repa.reshape (Z :. featureHeight * featureWidth :. numAnch) lbls
-        targets <- Repa.computeP $ 
-                    Repa.reshape (Z :. numAnch * 4 :. featureHeight :. featureWidth) $
-                    Repa.transpose $
-                    Repa.reshape (Z :. featureHeight * featureWidth :. numAnch * 4) targets
-        weights <- Repa.computeP $ 
-                    Repa.reshape (Z :. numAnch * 4 :. featureHeight :. featureWidth) $
-                    Repa.transpose $
-                    Repa.reshape (Z :. featureHeight * featureWidth :. numAnch * 4) weights
+    -- reshape and transpose labls   from (feat_h * feat_w * #anch,  ) to (#anch,     feat_h, feat_w)
+    -- reshape and transpose targets from (feat_h * feat_w * #anch, 4) to (#anch * 4, feat_h, feat_w)
+    -- reshape and transpose weights from (feat_h * feat_w * #anch, 4) to (#anch * 4, feat_h, feat_w)
+    let numAnch = length (conf ^. Anchor.conf_anchor_scales) * length (conf ^. Anchor.conf_anchor_ratios)
+    lbls    <- return $ Repa.computeS $ 
+                Repa.reshape (Z :. numAnch * featureHeight * featureWidth) $ 
+                Repa.transpose $ 
+                Repa.reshape (Z :. featureHeight * featureWidth :. numAnch) lbls
+    targets <- return $ Repa.computeS $ 
+                Repa.reshape (Z :. numAnch * 4 :. featureHeight :. featureWidth) $
+                Repa.transpose $
+                Repa.reshape (Z :. featureHeight * featureWidth :. numAnch * 4) targets
+    weights <- return $ Repa.computeS $ 
+                Repa.reshape (Z :. numAnch * 4 :. featureHeight :. featureWidth) $
+                Repa.transpose $
+                Repa.reshape (Z :. featureHeight * featureWidth :. numAnch * 4) weights
 
-        -- let numAnch = length (anchConf ^. Anchor.conf_anchor_scales) * length (anchConf ^. Anchor.conf_anchor_ratios)
-        --     cvt1 (Z :. i :. h :. w) = Z :. ((h * featureWidth + w) * numAnch + i)
-        --     cvt2 (Z :. i :. h :. w) = let (m, n) = divMod i 4
-        --                               in Z :. ((h * featureWidth + w) * numAnch + m) :. n
-        -- lbls    <- Repa.computeP $ Repa.reshape (Z :. numAnch * featureHeight :. featureWidth) $ 
-        --                 Repa.backpermute (Z :. numAnch :. featureHeight :. featureWidth) cvt1 lbls
-        -- targets <- Repa.computeP $ Repa.backpermute (Z :. numAnch * 4 :. featureHeight :. featureWidth) cvt2 targets
-        -- weights <- Repa.computeP $ Repa.backpermute (Z :. numAnch *4  :. featureHeight :. featureWidth) cvt2 weights 
+    -- let numAnch = length (anchConf ^. Anchor.conf_anchor_scales) * length (anchConf ^. Anchor.conf_anchor_ratios)
+    --     cvt1 (Z :. i :. h :. w) = Z :. ((h * featureWidth + w) * numAnch + i)
+    --     cvt2 (Z :. i :. h :. w) = let (m, n) = divMod i 4
+    --                               in Z :. ((h * featureWidth + w) * numAnch + m) :. n
+    -- lbls    <- Repa.computeP $ Repa.reshape (Z :. numAnch * featureHeight :. featureWidth) $ 
+    --                 Repa.backpermute (Z :. numAnch :. featureHeight :. featureWidth) cvt1 lbls
+    -- targets <- Repa.computeP $ Repa.backpermute (Z :. numAnch * 4 :. featureHeight :. featureWidth) cvt2 targets
+    -- weights <- Repa.computeP $ Repa.backpermute (Z :. numAnch *4  :. featureHeight :. featureWidth) cvt2 weights 
 
-        return (img, info, gt, lbls, targets, weights)
+    return (img, info, gt, lbls, targets, weights)
 
-    -- toNDArray :: [((ImageTensor, ImageInfo, GTBoxes, Anchor.Labels, Anchor.Targets, Anchor.Weights))] ->
-    --     IO ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
-    toNDArray dat = liftIO $ do
-        imagesC  <- convertToMX images
-        infosC   <- convertToMX infos
-        gtboxesC <- convertToMX [if V.null gt then emtpyGT else convertToRepa (V.toList gt) | gt <- gtboxes]
-        labelsC  <- convertToMX labels
-        targetsC <- convertToMX targets
-        weightsC <- convertToMX weights
-        return ((imagesC, infosC, gtboxesC), (labelsC, targetsC, weightsC))
-      where
-        (images, infos, gtboxes, labels, targets, weights) = unzip6 dat
-        emtpyGT = Repa.fromUnboxed (Z:.0:.5) UV.empty
+-- toNDArray :: [((ImageTensor, ImageInfo, GTBoxes, Anchor.Labels, Anchor.Targets, Anchor.Weights))] ->
+--     IO ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
+toNDArray dat = liftIO $ do
+    imagesC  <- convertToMX images
+    infosC   <- convertToMX infos
+    gtboxesC <- convertToMX [if V.null gt then emtpyGT else convertToRepa (V.toList gt) | gt <- gtboxes]
+    labelsC  <- convertToMX labels
+    targetsC <- convertToMX targets
+    weightsC <- convertToMX weights
+    return ((imagesC, infosC, gtboxesC), (labelsC, targetsC, weightsC))
+    where
+    (images, infos, gtboxes, labels, targets, weights) = unzip6 dat
+    emtpyGT = Repa.fromUnboxed (Z:.0:.5) UV.empty
 
-        convert :: Repa.Shape sh => [Array U sh Float] -> ([Int], UV.Vector Float)
-        convert xs = assert (not (null xs)) $ (ext, vec)
-          where
-            vec = UV.concat $ map Repa.toUnboxed xs
-            sh0 = Repa.extent (head xs)
-            ext = length xs : reverse (Repa.listOfShape sh0)
-            
-        convertToMX :: Repa.Shape sh => [Array U sh Float] -> IO (NDArray Float)
-        convertToMX   = uncurry fromVector . (_2 %~ UV.convert) . convert
+    convert :: Repa.Shape sh => [Array U sh Float] -> ([Int], UV.Vector Float)
+    convert xs = assert (not (null xs)) $ (ext, vec)
+        where
+        vec = UV.concat $ map Repa.toUnboxed xs
+        sh0 = Repa.extent (head xs)
+        ext = length xs : reverse (Repa.listOfShape sh0)
+        
+    convertToMX :: Repa.Shape sh => [Array U sh Float] -> IO (NDArray Float)
+    convertToMX   = uncurry fromVector . (_2 %~ UV.convert) . convert
 
-        -- shape, at the type level, are sequence of Int, although we wnat to append
-        -- a dimension at the head, we add Int at the tail, they are the same.
-        convertToRepa :: Repa.Shape sh => [Array U sh Float] -> Array U (sh :. Int) Float
-        convertToRepa = uncurry Repa.fromUnboxed . (_1 %~ Repa.shapeOfList . reverse) . convert
+    -- shape, at the type level, are sequence of Int, although we wnat to append
+    -- a dimension at the head, we add Int at the tail, they are the same.
+    convertToRepa :: Repa.Shape sh => [Array U sh Float] -> Array U (sh :. Int) Float
+    convertToRepa = uncurry Repa.fromUnboxed . (_1 %~ Repa.shapeOfList . reverse) . convert
