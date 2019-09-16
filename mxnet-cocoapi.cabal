@@ -1,5 +1,5 @@
 name:                       mxnet-cocoapi
-version:                    0.0.1.0
+version:                    0.2.0
 synopsis:                   To work with cocodataset with cocoapi
 description:                Haskell binding for the cocoapi in c
 homepage:                   http://github.com/pierric/mxnet-cocoapi
@@ -54,9 +54,7 @@ Library
                           , directory
                           , random-fu
                           , mxnet-base
-                          , mxnet-ops
                           , mxnet-dataiter
-    extra-libraries:     mxnet
     Build-tools:         c2hs
     c-sources:           cbits/maskApi.c
     include-dirs:        cbits/
