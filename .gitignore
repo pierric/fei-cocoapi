@@ -1,3 +1,5 @@
+stack.yaml.lock
+.vscode
 dist
 dist-*
 cabal-dev
