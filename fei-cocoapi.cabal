@@ -54,7 +54,7 @@ Library
                           , directory
                           , random-fu
                           , fei-base
-                          , fei-dataiter
+                          , fei-nn
     Build-tools:         c2hs
     c-sources:           cbits/maskApi.c
     include-dirs:        cbits/
