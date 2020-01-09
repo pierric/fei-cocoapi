@@ -21,29 +21,29 @@ data Configuration = Configuration {
     _conf_anchor_scales :: [Int],
     _conf_anchor_ratios :: [Float],
     _conf_allowed_border :: Int,
-    _conf_fg_num :: Int, 
+    _conf_fg_num :: Int,
     _conf_batch_num :: Int,
     _conf_bg_overlap :: Float,
     _conf_fg_overlap :: Float
 } deriving Show
 makeLenses ''Configuration
 
-anchors :: MonadReader Configuration m => 
+anchors :: MonadReader Configuration m =>
     Int -> Int -> Int -> m (V.Vector (Anchor U))
 anchors stride width height = do
     scales <- view conf_anchor_scales
     ratios <- view conf_anchor_ratios
     base   <- baseAnchors stride
-    return $ V.fromList 
+    return $ V.fromList
         [ Repa.computeS $ anch +^ offs
         | offY <- grid height
         , offX <- grid width
-        , anch <- base 
+        , anch <- base
         , let offs = fromListUnboxed (Z :. 4) [offX, offY, offX, offY]]
   where
     grid size = map fromIntegral [0, stride .. size * stride-1]
 
-baseAnchors :: MonadReader Configuration m => 
+baseAnchors :: MonadReader Configuration m =>
     Int -> m ([Anchor U])
 baseAnchors size = do
     scales <- view conf_anchor_scales
@@ -51,7 +51,7 @@ baseAnchors size = do
     return [makeBase s r | r <- ratios, s <- scales]
   where
     makeBase :: Int -> Float -> Anchor U
-    makeBase scale ratio = 
+    makeBase scale ratio =
         let sizeF = fromIntegral size - 1
             (w, h, x, y) = whctr (0, 0, sizeF, sizeF)
             ws = round $ sqrt (w * h / ratio) :: Int
@@ -88,7 +88,7 @@ overlapMatrix goodIndices gtBoxes anBoxes = Repa.fromFunction (Z :. width :. hei
     areaA = V.map calcArea anBoxes
     areaG = V.map calcArea gtBoxes
 
-    calcOvp (Z :. ig :. ia) = 
+    calcOvp (Z :. ig :. ia) =
         let gt = gtBoxes %! ig
             anchor = anBoxes %! ia
             iw = min (gt #! 2) (anchor #! 2) - max (gt #! 0) (anchor #! 0)
@@ -101,9 +101,9 @@ type Labels  = Repa.Array U DIM1 Float -- UV.Vector Int
 type Targets = Repa.Array U DIM2 Float -- UV.Vector (Float, Float, Float, Float)
 type Weights = Repa.Array U DIM2 Float -- UV.Vector (Float, Float, Float, Float)
 
-assign :: (MonadReader Configuration m, MonadIO m) => 
+assign :: (MonadReader Configuration m, MonadIO m) =>
     V.Vector (GTBox U) -> Int -> Int -> V.Vector (Anchor U) -> m (Labels, Targets, Weights)
-assign gtBoxes imWidth imHeight anBoxes 
+assign gtBoxes imWidth imHeight anBoxes
     | numGT == 0 = do
         goodIndices <- filterGoodIndices
         liftIO $ do
@@ -123,7 +123,7 @@ assign gtBoxes imWidth imHeight anBoxes
         _bg_overlap <- view conf_bg_overlap
         _batch_num  <- view conf_batch_num
         _fg_num     <- view conf_fg_num
-    
+
         goodIndices <- filterGoodIndices
 
         -- traceShowM ("#Good Anchors:", V.length goodIndices)
@@ -140,7 +140,7 @@ assign gtBoxes imWidth imHeight anBoxes
                 let j = argMax overlaps 0 i
                 -- traceShowM $ ("GT -> ", j)
                 UVM.write labels j 1
-            
+
             -- FG anchors that have overlapping with any GT >= thresh
             -- BG anchors that have overlapping with all GT < thresh
             UV.forM_ (UV.indexed $ Repa.toUnboxed $ Repa.foldS max 0 $ Repa.transpose overlaps) $ \(i, m) -> do
@@ -169,7 +169,7 @@ assign gtBoxes imWidth imHeight anBoxes
             when (numBG > maxBG) $ do
                 indices <- runRVar (shuffleN numBG $ UV.toList bgs) StdRandom
                 -- traceShowM ("Disable B", take (numBG - maxBG) indices)
-                forM_ (take (numBG - maxBG) indices) $ 
+                forM_ (take (numBG - maxBG) indices) $
                     flip (UVM.write labels) (-1)
 
             -- compute the regression from each FG anchor to its gt
@@ -178,14 +178,14 @@ assign gtBoxes imWidth imHeight anBoxes
                 gtDiffs = UV.zipWith makeTarget fgs gts
             targets <- UVM.replicate numLabels (0, 0, 0, 0)
             UV.zipWithM_ (UVM.write targets) fgs gtDiffs
-            
-            -- indicates which anchors have a regression 
+
+            -- indicates which anchors have a regression
             weights <- UVM.replicate numLabels (0, 0, 0, 0)
             UV.forM_ fgs $ flip (UVM.write weights) (1, 1, 1, 1)
 
             labels  <- UV.unsafeFreeze labels
             targets <- UV.unsafeFreeze targets
-            weights <- UV.unsafeFreeze weights 
+            weights <- UV.unsafeFreeze weights
             let labelsRepa  = Repa.fromUnboxed (Z:.numLabels) labels
                 targetsRepa = Repa.fromUnboxed (Z:.numLabels:.4) (flattenT targets)
                 weightsRepa = Repa.fromUnboxed (Z:.numLabels:.4) (flattenT weights)
@@ -195,8 +195,8 @@ assign gtBoxes imWidth imHeight anBoxes
     numLabels = V.length anBoxes
 
     argMax :: Array U DIM2 Float -> Int -> Int -> Int
-    argMax mat axis ind = 
-        let series = case axis of 
+    argMax mat axis ind =
+        let series = case axis of
                        0 -> Repa.slice mat $ Z :. ind :. All
                        1 -> Repa.slice mat $ Z :. All :. ind
                        _ -> throw BadDimension
@@ -212,11 +212,11 @@ assign gtBoxes imWidth imHeight anBoxes
                 x0 >= -_allowed_border &&
                 y0 >= -_allowed_border &&
                 x1 < fromIntegral imWidth + _allowed_border &&
-                y1 < fromIntegral imHeight + _allowed_border    
+                y1 < fromIntegral imHeight + _allowed_border
         return $ Set.fromList $ V.toList $ V.findIndices (goodAnchor . asTuple) anBoxes
 
     makeTarget :: Int -> Int -> (Float, Float, Float, Float)
-    makeTarget fgi gti = 
+    makeTarget fgi gti =
         let fgBox = anBoxes %! fgi
             gtBox = gtBoxes %! gti
             (w1, h1, cx1, cy1) = whctr $ asTuple fgBox
