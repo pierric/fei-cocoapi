@@ -92,28 +92,21 @@ main = do
                 flip runReaderT cocoConf $
                     C.runConduit $
                         getConduit (takeD 10 imgIter) C..| C.consume
-        -- , bench "assign-anchors" $ nfIO $
-        --     assignAnchors anchConf anchors 50 50 Nothing data0
+        , bench "assign-anchors" $ nfIO $
+             assignAnchors anchConf anchors 50 50 Nothing data0
         -- , bench "to-ndarray" $ nfIO $ toNDArray [data0_step1]
-        -- , bench "img-iter + assign-anchors" $ nfIO $
-        --     runResourceT $
-        --         C.runConduit $
-        --             dataIter1 C..| C.take 1
-        -- , bench "img-iter + assign-anchors + chunks" $ nfIO $
-        --     runResourceT $
-        --         C.runConduit $
-        --             dataIter2 C..| C.take 1
-        -- , bench "img-iter + assign-anchors + chunks + to-ndarray" $ nfIO $
-        --     runResourceT $
-        --         C.runConduit $
-        --             dataIter3 C..| C.take 1
-        -- , bench "1" $ nf Repa.toUnboxed $ data0 ^. _1
-        -- , bench "2" $ nf (UV.convert :: UV.Vector Float -> SV.Vector Float) $ Repa.toUnboxed (data0 ^. _1)
-        -- , bench "3" $ nfIO $ do {
-        --     [[d]] <- runResourceT $ C.runConduit $ dataIter2 C..| C.take 1;
-        --     return $ {-- Repa.toUnboxed $ --} d ^. _1 }
-
-        -- , bench "iter" $ nfIO $ runResourceT $ C.runConduit $ getConduit (takeD 1 dataIter) C..| C.consume
+        , bench "img-iter + assign-anchors" $ nfIO $
+            runResourceT $
+                C.runConduit $
+                    dataIter1 C..| C.take 1
+        , bench "img-iter + assign-anchors + chunks" $ nfIO $
+            runResourceT $
+                C.runConduit $
+                    dataIter2 C..| C.take 1
+        , bench "img-iter + assign-anchors + chunks + to-ndarray" $ nfIO $
+            runResourceT $
+                C.runConduit $
+                    dataIter3 C..| C.take 1
         ]
 
 
