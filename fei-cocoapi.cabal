@@ -1,5 +1,5 @@
 name:                       fei-cocoapi
-version:                    0.2.0
+version:                    0.3.0
 synopsis:                   Cocodataset with cocoapi
 description:                Haskell binding for the cocoapi in c
 homepage:                   http://github.com/pierric/fei-cocoapi
