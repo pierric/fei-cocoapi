@@ -3,8 +3,8 @@
 resolver: lts-12.16
 packages:
 - .
-#- ../IHaskell/ihaskell-display/ihaskell-diagrams
-#- ../IHaskell/ihaskell-display/ihaskell-juicypixels
+- ../IHaskell/ihaskell-display/ihaskell-diagrams
+- ../IHaskell/ihaskell-display/ihaskell-juicypixels
 extra-deps:
 - ../fei-nn
 - ../fei-base
@@ -19,13 +19,19 @@ extra-deps:
     #- fgl-5.5.4.0
 - JuicyPixels-repa-0.7.1.0
 - hlint-2.1.17
-- haskell-src-exts-util-0.2.5  
+- haskell-src-exts-util-0.2.5
 - unordered-containers-0.2.10.0
+- glib-0.13.7.1
+- pango-0.13.6.1
+- conduit-concurrent-map-0.1.1
+- hip-1.5.4.0
+- Chart-1.9
+- Chart-diagrams-1.9
+- SVGFonts-1.6.0.3
 extra-include-dirs:
-- /home/jiasen/dschungel/incubator-mxnet-1.5/include
-- /home/jiasen/dschungel/incubator-mxnet-1.5/nnvm/include/
+- /home/jiasen/hdd/dschungel/incubator-mxnet-1.5/include
 extra-lib-dirs:
-- /home/jiasen/dschungel/incubator-mxnet-1.5/lib
+- /home/jiasen/hdd/dschungel/incubator-mxnet-1.5/lib
 flags:
   fei-base:
     MXNet_1_5: true

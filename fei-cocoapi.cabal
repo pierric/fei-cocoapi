@@ -42,9 +42,6 @@ Library
                           , exceptions >= 0.8.3
                           , time < 2.0
                           , repa >= 3.4
-                          , JuicyPixels
-                          , JuicyPixels-repa
-                          , JuicyPixels-extra
                           , aeson >= 1.0 && <1.5
                           , attoparsec (>=0.13.2.2 && <0.14)
                           , lens >= 4.12
@@ -56,6 +53,7 @@ Library
                           , conduit-concurrent-map
                           , unliftio-core
                           , resourcet
+                          , hip
                           , fei-base
                           , fei-nn
     Build-tools:         c2hs
@@ -94,7 +92,14 @@ Executable profiling
                             containers,
                             conduit,
                             resourcet,
-                            mtl
+                            lens,
+                            deepseq,
+                            mtl,
+                            JuicyPixels,
+                            JuicyPixels-repa,
+                            JuicyPixels-extra,
+                            hip
+   ghc-options:             -threaded
 
 Executable hist
     hs-source-dirs:         examples

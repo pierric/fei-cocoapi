@@ -1,16 +1,26 @@
-{-# Language OverloadedLabels #-}
+{-# Language OverloadedLabels, FlexibleInstances #-}
 import Criterion.Main
 import Criterion.Main.Options
 import Data.Store
 import qualified Data.IntSet as Set
 import qualified Data.ByteString as BS
 import qualified Data.Vector as V
+import qualified Data.Vector.Storable as SV
 import qualified Data.Vector.Unboxed as UV
 import Data.Array.Repa ((:.)(..), Z (..), fromUnboxed, computeUnboxedP, computeUnboxedS)
+import qualified Data.Array.Repa as Repa
 import qualified Data.Conduit as C
 import qualified Data.Conduit.List as C
 import Control.Monad.Trans.Resource
 import Control.Monad.Reader
+import Control.Lens
+import Control.DeepSeq
+
+import qualified Codec.Picture as JUC
+import Codec.Picture.Extra
+import qualified Codec.Picture.Repa as RPJ
+
+import qualified Graphics.Image as HIP
 
 import MXNet.NN.DataIter.Anchor as Anch
 import MXNet.NN.DataIter.Coco as Coco
@@ -18,7 +28,7 @@ import MXNet.NN.DataIter.Class
 import MXNet.NN.DataIter.Conduit
 import MXNet.Base (NDArray(..), mxListAllOpNames, (.&), HMap(..), ArgOf(..))
 
-main1 = do
+main_boxes = do
     goodIndices <- BS.readFile "examples/goodIndices.bin" >>= decodeIO :: IO (V.Vector Int)
     gtBoxes     <- BS.readFile "examples/gtBoxes.bin"     >>= decodeIO :: IO (V.Vector (UV.Vector Float))
     anchors     <- BS.readFile "examples/anchors.bin"     >>= decodeIO :: IO (V.Vector (UV.Vector Float))
@@ -30,6 +40,26 @@ main1 = do
         [ bench "computeUnboxedP" $ whnfIO $ computeUnboxedP $ overlapMatrix goodIndices gtBoxes anchors
         , bench "computeUnboxedS" $ whnf computeUnboxedS $ overlapMatrix goodIndices gtBoxes anchors
         ]
+
+main_scale_image = do
+    let imgFilePath = "/home/jiasen/hdd/dschungel/coco/val2017/000000121242.jpg"
+    Right imgjuc <- liftIO (JUC.readImage imgFilePath)
+    Right imghip <- liftIO (HIP.readImage imgFilePath :: IO (Either String (HIP.Image HIP.VS HIP.RGB Double)))
+    print (HIP.dims imghip)
+    defaultMain
+        [ bench "scale-img-juicy" $ nfIO $
+            let img1 = JUC.convertRGB8 imgjuc
+                img2 = scaleBilinear 1024 1024 img1
+                img3 = RPJ.imgData (RPJ.convertImage img2 :: RPJ.Img RPJ.RGB)
+            in Repa.computeUnboxedP img3
+
+        , bench "scale-img-hip" $ nfIO $
+            let img2 = HIP.resize HIP.Bilinear HIP.Edge (1024, 1024) imghip
+            in return img2
+        ]
+
+instance (Repa.Shape sh, UV.Unbox e) => NFData (Repa.Array Repa.U sh e) where
+    rnf arr = Repa.deepSeqArray arr ()
 
 main = do
     cocoInst <- coco "/home/jiasen/hdd/dschungel/coco" "val2017"
@@ -54,41 +84,36 @@ main = do
         dataIter1 = morf imgC C..| C.mapM (assignAnchors anchConf anchors 50 50 Nothing)
         dataIter2 = dataIter1 C..| C.chunksOf 1
         dataIter3 = dataIter2 C..| C.mapM toNDArray
-    -- let dataIter = cocoImagesWithAnchors cocoInst (\_ -> return (50, 50))
-    --                     (#batch_size     := 1
-    --                   .& #long_size      := 1024
-    --                   .& #mean           := (123.68, 116.779, 103.939)
-    --                   .& #std            := (1,1,1)
-    --                   .& #feature_stride := 16
-    --                   .& #anchor_scales  := [4, 8, 16, 32]
-    --                   .& #anchor_ratios  := [0.5, 1, 2]
-    --                   .& #allowed_border := 0
-    --                   .& #batch_rois     := 256
-    --                   .& #fg_fraction    := 0.5
-    --                   .& #fg_overlap     := 0.7
-    --                   .& #bg_overlap     := 0.3
-    --                   .& Nil)
+        dataIter4 = dataIter1 C..| C.mapM (\x -> toNDArray [x])
+
     defaultMain
-        [ bench "img-iter" $ whnfIO $
+        [ bench "img-iter" $ nfIO $
             runResourceT $
                 flip runReaderT cocoConf $
                     C.runConduit $
-                        getConduit (takeD 1 imgIter) C..| C.consume
-        , bench "assign-anchors" $ whnfIO $
-            assignAnchors anchConf anchors 50 50 Nothing data0
-        , bench "to-ndarray" $ whnfIO $ toNDArray [data0_step1]
-        , bench "img-iter + assign-anchors" $ whnfIO $
-            runResourceT $
-                C.runConduit $
-                    dataIter1 C..| C.take 1
-        , bench "img-iter + assign-anchors + chunks" $ whnfIO $
-            runResourceT $
-                C.runConduit $
-                    dataIter2 C..| C.take 1
-        , bench "img-iter + assign-anchors + chunks + to-ndarray" $ whnfIO $
-            runResourceT $
-                C.runConduit $
-                    dataIter3 C..| C.take 1
+                        getConduit (takeD 10 imgIter) C..| C.consume
+        -- , bench "assign-anchors" $ nfIO $
+        --     assignAnchors anchConf anchors 50 50 Nothing data0
+        -- , bench "to-ndarray" $ nfIO $ toNDArray [data0_step1]
+        -- , bench "img-iter + assign-anchors" $ nfIO $
+        --     runResourceT $
+        --         C.runConduit $
+        --             dataIter1 C..| C.take 1
+        -- , bench "img-iter + assign-anchors + chunks" $ nfIO $
+        --     runResourceT $
+        --         C.runConduit $
+        --             dataIter2 C..| C.take 1
+        -- , bench "img-iter + assign-anchors + chunks + to-ndarray" $ nfIO $
+        --     runResourceT $
+        --         C.runConduit $
+        --             dataIter3 C..| C.take 1
+        -- , bench "1" $ nf Repa.toUnboxed $ data0 ^. _1
+        -- , bench "2" $ nf (UV.convert :: UV.Vector Float -> SV.Vector Float) $ Repa.toUnboxed (data0 ^. _1)
+        -- , bench "3" $ nfIO $ do {
+        --     [[d]] <- runResourceT $ C.runConduit $ dataIter2 C..| C.take 1;
+        --     return $ {-- Repa.toUnboxed $ --} d ^. _1 }
 
-        -- , bench "iter" $ whnfIO $ runResourceT $ C.runConduit $ getConduit (takeD 1 dataIter) C..| C.consume
+        -- , bench "iter" $ nfIO $ runResourceT $ C.runConduit $ getConduit (takeD 1 dataIter) C..| C.consume
         ]
+
+
