@@ -40,12 +40,16 @@ import qualified Data.Random as RND (shuffleN, runRVar, StdRandom(..))
 import Data.Conduit.ConcurrentMap (concurrentMapM_numCaps)
 import Control.Monad.IO.Unlift
 import Control.Monad.Trans.Resource
+import Control.DeepSeq
 
 import MXNet.Base (NDArray(..), Fullfilled, ArgsHMap, ParameterList, Attr(..), (!), (!?), (.&), HMap(..), ArgOf(..), fromVector)
 import MXNet.Base.Operators.NDArray (stack)
 import MXNet.NN.DataIter.Conduit
 import qualified MXNet.NN.DataIter.Anchor as Anchor
 import MXNet.Coco.Types
+
+instance (Repa.Shape sh, Unbox e) => NFData (Array U sh e) where
+    rnf arr = Repa.deepSeqArray arr ()
 
 data Coco = Coco FilePath String Instance
   deriving Generic
@@ -121,9 +125,8 @@ cocoImages (Coco base datasplit inst) shuffle = ConduitData (Just 1) $ do
             then return Nothing
             else do
                 imgEval <- transform $ Repa.map double2Float imgRepa
-                let imgRet = Repa.computeUnboxedS imgEval
                 -- deepSeq the array so that the workload are well parallelized.
-                Repa.deepSeqArray imgRet $ return $ Just (imgRet, imgInfo, gt_boxes)
+                return $!! Just (Repa.computeUnboxedS imgEval, imgInfo, gt_boxes)
 
     -- map each category from id to its index in the cocoClassNames.
     catTabl = M.fromList $ V.toList $ V.map (\cat -> (cat ^. odc_id, fromJust $ V.elemIndex (cat ^. odc_name) cocoClassNames)) (inst ^. categories)
@@ -208,7 +211,7 @@ type instance ParameterList "CocoImagesWithAnchors" =
        '("image_size",     'AttrReq Int),
        '("mean",           'AttrReq (Float, Float, Float)),
        '("std",            'AttrReq (Float, Float, Float)),
-       -- anchors are generated on feature image with a stride       
+       -- anchors are generated on feature image with a stride
        '("feature_width",  'AttrReq Int),
        '("feature_height", 'AttrReq Int),
        '("feature_stride", 'AttrOpt Int),
@@ -224,13 +227,13 @@ type instance ParameterList "CocoImagesWithAnchors" =
        '("fixed_num_gt",   'AttrOpt (Maybe Int))]
 
 
-cocoImagesWithAnchors' :: (Fullfilled "CocoImagesWithAnchors" args, MonadUnliftIO m, MonadResource m) =>
-    ConduitData (ReaderT Configuration m) (ImageTensor, ImageInfo, GTBoxes) ->
+cocoImagesWithAnchors' :: Fullfilled "CocoImagesWithAnchors" args =>
+    ConduitData (ReaderT Configuration (ResourceT IO)) (ImageTensor, ImageInfo, GTBoxes) ->
     ArgsHMap "CocoImagesWithAnchors" args ->
-    ConduitData m ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
+    ConduitData (ResourceT IO) ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
 cocoImagesWithAnchors' (ConduitData _ images) args = ConduitData (Just batchSize) $ do
     anchors <- runReaderT (Anchor.anchors featureStride featW featH) anchConf
-    morf images .| concurrentMapM_numCaps 1 (assignAnchors anchConf anchors featW featH maxGT) .| C.chunksOf batchSize .| concurrentMapM_numCaps 1 toNDArray
+    morf images .| C.mapM (assignAnchors anchConf anchors featW featH maxGT) .| C.chunksOf batchSize .| C.mapM toNDArray
   where
     batchSize = args ! #batch_size
     batchRois     = fromMaybe 256 $ args !? #batch_rois
@@ -254,9 +257,9 @@ cocoImagesWithAnchors' (ConduitData _ images) args = ConduitData (Just batchSize
     }
     morf = transPipe (flip runReaderT cocoConf)
 
-cocoImagesWithAnchors :: (Fullfilled "CocoImagesWithAnchors" args, MonadUnliftIO m, MonadResource m) =>
+cocoImagesWithAnchors :: Fullfilled "CocoImagesWithAnchors" args =>
     Coco -> ArgsHMap "CocoImagesWithAnchors" args ->
-    ConduitData m ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
+    ConduitData (ResourceT IO) ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
 cocoImagesWithAnchors cocoDef args = cocoImagesWithAnchors' imgs args
   where
     imgs    = cocoImages cocoDef shuffle
@@ -301,10 +304,10 @@ assignAnchors conf anchors featureWidth featureHeight maxGT (img, info, gt) = do
         else
             return $ V.take maxGT gt
 
-    return (img, info, gtRet, lbls, targets, weights)
+    return $!! (img, info, gtRet, lbls, targets, weights)
 
-toNDArray :: MonadIO m => 
-    [((ImageTensor, ImageInfo, GTBoxes, Array U DIM1 Float, Array U DIM3 Float, Array U DIM3 Float))] -> 
+toNDArray :: MonadIO m =>
+    [((ImageTensor, ImageInfo, GTBoxes, Array U DIM1 Float, Array U DIM3 Float, Array U DIM3 Float))] ->
     m ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
 toNDArray dat = liftIO $ do
     imagesC  <- convertToMX images
@@ -313,7 +316,7 @@ toNDArray dat = liftIO $ do
     labelsC  <- convertToMX labels
     targetsC <- convertToMX targets
     weightsC <- convertToMX weights
-    return ((imagesC, infosC, gtboxesC), (labelsC, targetsC, weightsC))
+    return $!! ((imagesC, infosC, gtboxesC), (labelsC, targetsC, weightsC))
   where
     (images, infos, gtboxes, labels, targets, weights) = unzip6 dat
 
@@ -323,7 +326,7 @@ toNDArray dat = liftIO $ do
 
     repaToNDArray :: Repa.Shape sh => Array U sh Float -> IO (NDArray Float)
     repaToNDArray arr = do
-        let sh = Repa.listOfShape $ Repa.extent arr
+        let sh = reverse $ Repa.listOfShape $ Repa.extent arr
         fromVector sh $ SV.convert $ Repa.toUnboxed arr
 
     convertToMX arr = mapM repaToNDArray arr >>= stackList

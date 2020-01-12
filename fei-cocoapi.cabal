@@ -27,6 +27,7 @@ Library
                             TypeFamilies,
                             OverloadedLabels,
                             FlexibleContexts,
+                            FlexibleInstances,
                             StandaloneDeriving,
                             DeriveGeneric,
                             TypeOperators
@@ -54,6 +55,7 @@ Library
                           , unliftio-core
                           , resourcet
                           , hip
+                          , deepseq
                           , fei-base
                           , fei-nn
     Build-tools:         c2hs

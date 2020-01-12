@@ -58,10 +58,7 @@ main_scale_image = do
             in return img2
         ]
 
-instance (Repa.Shape sh, UV.Unbox e) => NFData (Repa.Array Repa.U sh e) where
-    rnf arr = Repa.deepSeqArray arr ()
-
-main = do
+main_iter = do
     cocoInst <- coco "/home/jiasen/hdd/dschungel/coco" "val2017"
     let imgIter@(ConduitData _ imgC) = cocoImages cocoInst True
         cocoConf = Coco.Configuration 800 (123.68, 116.779, 103.939) (1, 1, 1)
@@ -94,19 +91,44 @@ main = do
                         getConduit (takeD 10 imgIter) C..| C.consume
         , bench "assign-anchors" $ nfIO $
              assignAnchors anchConf anchors 50 50 Nothing data0
-        -- , bench "to-ndarray" $ nfIO $ toNDArray [data0_step1]
+        , bench "to-ndarray" $ nfIO $ toNDArray [data0_step1]
         , bench "img-iter + assign-anchors" $ nfIO $
             runResourceT $
                 C.runConduit $
-                    dataIter1 C..| C.take 1
+                    dataIter1 C..| C.take 10
         , bench "img-iter + assign-anchors + chunks" $ nfIO $
             runResourceT $
                 C.runConduit $
-                    dataIter2 C..| C.take 1
+                    dataIter2 C..| C.take 10
         , bench "img-iter + assign-anchors + chunks + to-ndarray" $ nfIO $
             runResourceT $
                 C.runConduit $
-                    dataIter3 C..| C.take 1
+                    dataIter3 C..| C.take 10
+        ]
+
+main = do
+    cocoInst <- coco "/home/jiasen/hdd/dschungel/coco" "val2017"
+    let iter = cocoImagesWithAnchors cocoInst
+                        (#anchor_scales := [8, 16, 32]
+                      .& #anchor_ratios := [0.5, 1, 2]
+                      .& #batch_rois    := 256
+                      .& #feature_stride:= 16
+                      .& #allowed_border:= 0
+                      .& #fg_fraction   := 0.6
+                      .& #fg_overlap    := 0.7
+                      .& #bg_overlap    := 0.3
+                      .& #mean          := (123.68, 116.779, 103.939)
+                      .& #std           := (1, 1, 1)
+                      .& #batch_size    := 1
+                      .& #image_size    := 800
+                      .& #feature_width := 50
+                      .& #feature_height:= 50
+                      .& #shuffle       := True
+                      .& Nil)
+
+
+    defaultMain
+        [ bench "iter" $ nfIO $ runResourceT $ C.runConduit $ getConduit (takeD 10 iter) C..| C.consume
         ]
 
 
