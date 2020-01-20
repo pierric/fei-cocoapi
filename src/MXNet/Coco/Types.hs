@@ -13,6 +13,7 @@ import Data.Vector (Vector)
 import Control.Lens (makeLenses)
 import GHC.Generics (Generic)
 import Data.Store (Store)
+import Control.DeepSeq (NFData)
 
 data Instance = Instance {
     _info :: Info,
@@ -23,6 +24,7 @@ data Instance = Instance {
 } deriving Generic
 
 instance Store Instance
+instance NFData Instance
 
 instance FromJSON Instance where
     parseJSON = withObject "Instance" $ \v -> Instance
@@ -42,6 +44,7 @@ data Info = Info {
 } deriving Generic
 
 instance Store Info
+instance NFData Info
 
 instance FromJSON Info where
     parseJSON = withObject "Info" $ \v -> Info
@@ -59,6 +62,7 @@ data License = License {
 } deriving Generic
 
 instance Store License
+instance NFData License
 
 instance FromJSON License where
     parseJSON = withObject "License" $ \v -> License
@@ -82,6 +86,7 @@ deriving instance Generic LocalTime
 instance Store TimeOfDay
 instance Store LocalTime
 instance Store Image
+instance NFData Image
 
 instance FromJSON Image where
     parseJSON = withObject "Image" $ \v -> Image
@@ -104,6 +109,7 @@ data Annotation = AnnObjectDetection {
 } deriving Generic
 
 instance Store Annotation
+instance NFData Annotation
 
 instance FromJSON Annotation where
     parseJSON = withObject "Annotation" $ \v -> AnnObjectDetection
@@ -118,6 +124,7 @@ data Segmentation = SegRLE { _seg_counts :: [Int], _seg_size :: (Int, Int)} | Se
   deriving Generic
 
 instance Store Segmentation
+instance NFData Segmentation
 
 instance FromJSON Segmentation where
     parseJSON value = (withObject "RLE" (\v -> SegRLE <$> v .: "counts" <*> v .: "size") value) <|>
@@ -130,6 +137,7 @@ data Category = CatObjectDetection {
 } deriving Generic
 
 instance Store Category
+instance NFData Category
 
 instance FromJSON Category where
     parseJSON = withObject "Category" $ \v -> CatObjectDetection
@@ -140,6 +148,7 @@ instance FromJSON Category where
 newtype CocoDay = CocoDay Day deriving Generic
 
 instance Store CocoDay
+instance NFData CocoDay
 
 instance FromJSON CocoDay where
     parseJSON = withText "Day" $ \t -> case A.parseOnly (day <* A.endOfInput) t of

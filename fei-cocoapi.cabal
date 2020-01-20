@@ -100,7 +100,8 @@ Executable profiling
                             JuicyPixels,
                             JuicyPixels-repa,
                             JuicyPixels-extra,
-                            hip
+                            hip,
+                            conduit-concurrent-map
    ghc-options:             -threaded
 
 Executable hist

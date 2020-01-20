@@ -4,7 +4,7 @@
 module MXNet.NN.DataIter.Coco (
     cocoImages,
     cocoImagesWithAnchors,
-    cocoImagesWithAnchors',
+    loadImageAndGT,
     Coco(..),
     coco,
     Configuration(..),
@@ -92,42 +92,43 @@ data Configuration = Configuration {
 }
 makeLenses ''Configuration
 
-cocoImages :: (MonadReader Configuration m, MonadUnliftIO m, MonadResource m) => Coco -> Bool -> ConduitData m (ImageTensor, ImageInfo, GTBoxes)
-cocoImages (Coco base datasplit inst) shuffle = ConduitData (Just 1) $ do
+cocoImages :: MonadIO m => Coco -> Bool -> ConduitT () Image m ()
+cocoImages (Coco _ _ inst) shuffle = do
     all_images <- return $ inst ^. images
     all_images <- if shuffle then
                     liftIO $ RND.runRVar (RND.shuffleN (length all_images) (V.toList all_images)) RND.StdRandom
                   else
                     return $ V.toList all_images
-    C.yieldMany all_images {-- .| C.iterM (liftIO . print) --} .| concurrentMapM_numCaps 1 loadImg .| C.catMaybes
+    C.yieldMany all_images
+
+loadImageAndGT :: (MonadReader Configuration m, MonadIO m) => Coco -> Image -> m (Maybe (ImageTensor, ImageInfo, GTBoxes))
+loadImageAndGT (Coco base datasplit inst) img = do
+    width <- view conf_width
+
+    let imgFilePath = base </> datasplit </> img ^. img_file_name
+    imgRGB <- raiseLeft (FileNotFound imgFilePath) <$> liftIO (HIP.readImageExact HIP.JPG imgFilePath)
+
+    let (imgH, imgW) = HIP.dims (imgRGB :: HIP.Image HIP.VS HIP.RGB Double)
+        imgH_  = fromIntegral imgH
+        imgW_  = fromIntegral imgW
+        width_ = fromIntegral width
+        (scale, imgW', imgH') = if imgW >= imgH
+            then (width_ / imgW_, width, floor (imgH_ * width_ / imgW_))
+            else (width_ / imgH_, floor (imgW_ * width_ / imgH_), width)
+        imgInfo = fromListUnboxed (Z :. 3) [fromIntegral imgH', fromIntegral imgW', scale]
+
+        imgResized = HIP.resize HIP.Bilinear HIP.Edge (imgH', imgW') imgRGB
+        imgPadded  = HIP.canvasSize (HIP.Fill $ HIP.PixelRGB 0 0 0) (width, width) imgResized
+        imgRepa    = Repa.fromUnboxed (Z:.width:.width:.3) $ SV.convert $ SV.unsafeCast $ HIP.toVector imgPadded
+        gt_boxes   = get_gt_boxes scale img
+
+    if V.null gt_boxes
+        then return Nothing
+        else do
+            imgEval <- transform $ Repa.map double2Float imgRepa
+            -- deepSeq the array so that the workload are well parallelized.
+            return $!! Just (Repa.computeUnboxedS imgEval, imgInfo, gt_boxes)
   where
-    loadImg img = do
-        width <- view conf_width
-
-        let imgFilePath = base </> datasplit </> img ^. img_file_name
-        imgRGB <- raiseLeft (FileNotFound imgFilePath) <$> liftIO (HIP.readImageExact HIP.JPG imgFilePath)
-
-        let (imgH, imgW) = HIP.dims (imgRGB :: HIP.Image HIP.VS HIP.RGB Double)
-            imgH_  = fromIntegral imgH
-            imgW_  = fromIntegral imgW
-            width_ = fromIntegral width
-            (scale, imgW', imgH') = if imgW >= imgH
-                then (width_ / imgW_, width, floor (imgH_ * width_ / imgW_))
-                else (width_ / imgH_, floor (imgW_ * width_ / imgH_), width)
-            imgInfo = fromListUnboxed (Z :. 3) [fromIntegral imgH', fromIntegral imgW', scale]
-
-            imgResized = HIP.resize HIP.Bilinear HIP.Edge (imgH', imgW') imgRGB
-            imgPadded  = HIP.canvasSize (HIP.Fill $ HIP.PixelRGB 0 0 0) (width, width) imgResized
-            imgRepa    = Repa.fromUnboxed (Z:.width:.width:.3) $ SV.convert $ SV.unsafeCast $ HIP.toVector imgPadded
-            gt_boxes   = get_gt_boxes scale img
-
-        if V.null gt_boxes
-            then return Nothing
-            else do
-                imgEval <- transform $ Repa.map double2Float imgRepa
-                -- deepSeq the array so that the workload are well parallelized.
-                return $!! Just (Repa.computeUnboxedS imgEval, imgInfo, gt_boxes)
-
     -- map each category from id to its index in the cocoClassNames.
     catTabl = M.fromList $ V.toList $ V.map (\cat -> (cat ^. odc_id, fromJust $ V.elemIndex (cat ^. odc_name) cocoClassNames)) (inst ^. categories)
 
@@ -227,14 +228,20 @@ type instance ParameterList "CocoImagesWithAnchors" =
        '("fixed_num_gt",   'AttrOpt (Maybe Int))]
 
 
-cocoImagesWithAnchors' :: Fullfilled "CocoImagesWithAnchors" args =>
-    ConduitData (ReaderT Configuration (ResourceT IO)) (ImageTensor, ImageInfo, GTBoxes) ->
-    ArgsHMap "CocoImagesWithAnchors" args ->
+cocoImagesWithAnchors :: Fullfilled "CocoImagesWithAnchors" args =>
+    Coco -> ArgsHMap "CocoImagesWithAnchors" args ->
     ConduitData (ResourceT IO) ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
-cocoImagesWithAnchors' (ConduitData _ images) args = ConduitData (Just batchSize) $ do
+cocoImagesWithAnchors cocoInst args = ConduitData (Just 1) $ do
     anchors <- runReaderT (Anchor.anchors featureStride featW featH) anchConf
-    morf images .| C.mapM (assignAnchors anchConf anchors featW featH maxGT) .| C.chunksOf batchSize .| C.mapM toNDArray
+    images
+        .| concurrentMapM_numCaps 16 (flip runReaderT imgsConf . loadImageAndGT cocoInst)
+        .| C.catMaybes
+        .| C.mapM (assignAnchors anchConf anchors featW featH maxGT)
+        .| C.chunksOf batchSize
+        .| C.mapM toNDArray
   where
+    shuffle = fromMaybe True $ args !? #shuffle
+    images  = cocoImages cocoInst shuffle
     batchSize = args ! #batch_size
     batchRois     = fromMaybe 256 $ args !? #batch_rois
     featW = args ! #feature_width
@@ -250,20 +257,11 @@ cocoImagesWithAnchors' (ConduitData _ images) args = ConduitData (Just batchSize
         Anchor._conf_fg_overlap     = fromMaybe 0.7 $ args !? #fg_overlap,
         Anchor._conf_bg_overlap     = fromMaybe 0.3 $ args !? #bg_overlap
     }
-    cocoConf = Configuration {
+    imgsConf = Configuration {
         _conf_width    = args ! #image_size,
         _conf_mean     = args ! #mean,
         _conf_std      = args ! #std
     }
-    morf = transPipe (flip runReaderT cocoConf)
-
-cocoImagesWithAnchors :: Fullfilled "CocoImagesWithAnchors" args =>
-    Coco -> ArgsHMap "CocoImagesWithAnchors" args ->
-    ConduitData (ResourceT IO) ((NDArray Float, NDArray Float, NDArray Float), (NDArray Float, NDArray Float, NDArray Float))
-cocoImagesWithAnchors cocoDef args = cocoImagesWithAnchors' imgs args
-  where
-    imgs    = cocoImages cocoDef shuffle
-    shuffle = fromMaybe True $ args !? #shuffle
 
 assignAnchors :: MonadIO m =>
     Anchor.Configuration ->
