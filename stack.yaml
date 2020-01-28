@@ -29,9 +29,9 @@ extra-deps:
 - Chart-diagrams-1.9
 - SVGFonts-1.6.0.3
 extra-include-dirs:
-- /home/jiasen/hdd/dschungel/incubator-mxnet-1.5/include
+- /home/jiasen/hdd/dschungel/incubator-mxnet-1.6.0.rc1/include
 extra-lib-dirs:
-- /home/jiasen/hdd/dschungel/incubator-mxnet-1.5/lib
+- /home/jiasen/hdd/dschungel/incubator-mxnet-1.6.0.rc1/lib
 flags:
   fei-base:
-    MXNet_1_5: true
+    MXNet_1_6: true

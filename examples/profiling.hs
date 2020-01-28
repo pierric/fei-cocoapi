@@ -23,12 +23,13 @@ import qualified Codec.Picture.Repa as RPJ
 
 import qualified Graphics.Image as HIP
 
-import MXNet.NN.DataIter.Anchor as Anch
+-- import MXNet.NN.DataIter.Anchor as Anch
 import MXNet.NN.DataIter.Coco as Coco
 import MXNet.NN.DataIter.Class
 import MXNet.NN.DataIter.Conduit
 import MXNet.Base (NDArray(..), mxListAllOpNames, (.&), HMap(..), ArgOf(..))
 
+{--
 main_boxes = do
     goodIndices <- BS.readFile "examples/goodIndices.bin" >>= decodeIO :: IO (V.Vector Int)
     gtBoxes     <- BS.readFile "examples/gtBoxes.bin"     >>= decodeIO :: IO (V.Vector (UV.Vector Float))
@@ -41,8 +42,9 @@ main_boxes = do
         [ bench "computeUnboxedP" $ whnfIO $ computeUnboxedP $ overlapMatrix goodIndices gtBoxes anchors
         , bench "computeUnboxedS" $ whnf computeUnboxedS $ overlapMatrix goodIndices gtBoxes anchors
         ]
+--}
 
-main_scale_image = do
+main = do
     let imgFilePath = "/home/jiasen/hdd/dschungel/coco/val2017/000000121242.jpg"
     Right imgjuc <- liftIO (JUC.readImage imgFilePath)
     Right imghip <- liftIO (HIP.readImage imgFilePath :: IO (Either String (HIP.Image HIP.VS HIP.RGB Double)))
@@ -59,6 +61,7 @@ main_scale_image = do
             in return img2
         ]
 
+{--
 main_iter = do
     cocoInst <- coco "/home/jiasen/hdd/dschungel/coco" "val2017"
     let anchConf = Anch.Configuration {
@@ -150,5 +153,4 @@ main = do
     defaultMain
         [ bench "iter" $ nfIO $ runResourceT $ C.runConduit $ getConduit iter C..| C.take 10
         ]
-
-
+--}
