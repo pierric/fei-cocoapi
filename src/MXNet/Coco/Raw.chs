@@ -1,7 +1,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module MXNet.Coco.Raw where
 
-import Foreign.Storable
+import RIO
+import RIO.Partial (toEnum)
+import qualified RIO.NonEmpty as RNE
+import qualified RIO.NonEmpty.Partial as RNE
+import qualified RIO.Vector.Storable as SV
+import qualified RIO.Vector.Storable.Unsafe as SV
+import qualified Data.Vector.Storable.Mutable as SVM
+import qualified RIO.ByteString as BS
 import Foreign.Ptr
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
@@ -10,10 +17,6 @@ import Foreign.C.String (CString)
 import Foreign.Marshal.Array
 import Foreign.Marshal.Alloc
 import Foreign.Storable.Tuple ()
-import qualified Data.Vector.Storable as SV
-import qualified Data.Vector.Storable.Mutable as SVM
-import qualified Data.ByteString as BS
-import Control.Exception 
 
 #include "maskApi.h"
 
@@ -25,12 +28,16 @@ data RLE = RLE {
 }
 
 makeRLE :: (Ptr () -> IO ()) -> IO RLE
-makeRLE a = makeRLEs 1 a >>= return . head
+makeRLE a = makeRLEs 1 a >>= return . RNE.head
 
-makeRLEs :: Int -> (Ptr () -> IO ()) -> IO [RLE]
-makeRLEs num a = allocaBytesAligned (num * {#sizeof RLE #}) {#alignof RLE#} (\prle -> do
-    a prle
-    go num prle [])
+makeRLEs :: Int -> (Ptr () -> IO ()) -> IO (NonEmpty RLE)
+makeRLEs num a
+    | num < 1 = error "number should be positive"
+    | otherwise = do
+        rles <- allocaBytesAligned (num * {#sizeof RLE #}) {#alignof RLE#} (\prle -> do
+                    a prle
+                    go num prle [])
+        return $ RNE.fromList rles
   where
     go 0 _ rles = return $ reverse rles
     go n prle rles = do
@@ -46,19 +53,19 @@ makeRLEs num a = allocaBytesAligned (num * {#sizeof RLE #}) {#alignof RLE#} (\pr
         return $ RLE h w m mgr_c
 
 withRLE :: RLE -> (Ptr () -> IO a) -> IO a
-withRLE rle = withRLEs [rle]
+withRLE rle = withRLEs (RNE.fromList [rle])
 
-withRLEs :: [RLE] -> (Ptr () -> IO a) -> IO a
+withRLEs :: NonEmpty RLE -> (Ptr () -> IO a) -> IO a
 withRLEs rles = withRLEsLen (length rles) rles
 
-withRLEsLen :: Int -> [RLE] -> (Ptr () -> IO a) -> IO a
+withRLEsLen :: Int -> NonEmpty RLE -> (Ptr () -> IO a) -> IO a
 withRLEsLen num rles a = do
     allocaBytesAligned (num * {#sizeof RLE#}) {#alignof RLE#} $ \prles -> do
-        go prles rles
+        go prles $ RNE.toList rles
         ret <- a prles
         mapM_ (touchForeignPtr . _rle_cnts) rles
         return ret
-  where 
+  where
     go _ [] = return ()
     go prles (rle : nrles) = do
         pokeRLE prles rle
@@ -106,12 +113,14 @@ rleFree rle = finalizeForeignPtr (_rle_cnts rle)
         `Int'
     } -> `()'
 #}
-  
-rleEncode :: SV.Vector CUChar -> Int -> Int -> Int -> IO [RLE]
-rleEncode m h w n = do
-    makeRLEs n (\ prle ->
-        svUnsafeWith m (\pm -> do 
-            rleEncode_ prle (castPtr pm) h w n))
+
+rleEncode :: SV.Vector CUChar -> Int -> Int -> Int -> IO (NonEmpty RLE)
+rleEncode m h w n
+    | n < 1 = error "number must be positive"
+    | otherwise = do
+        makeRLEs n (\ prle ->
+            svUnsafeWith m (\pm -> do
+                rleEncode_ prle (castPtr pm) h w n))
 
 {#fun rleDecode as rleDecode_
     {
@@ -121,9 +130,9 @@ rleEncode m h w n = do
     } -> `()'
 #}
 
-rleDecode :: [RLE] -> Int -> Int -> IO (SV.Vector CUChar)
+rleDecode :: NonEmpty RLE -> Int -> Int -> IO (SV.Vector CUChar)
 rleDecode rles h w = do
-    let n = length rles 
+    let n = length rles
         size = n * h * w
     mv <- SVM.new size
     SVM.unsafeWith mv $ (\ptr -> do
@@ -140,27 +149,29 @@ rleDecode rles h w = do
     } -> `()'
 #}
 
-rleMerge :: [RLE] -> Bool -> IO RLE
+rleMerge :: NonEmpty RLE -> Bool -> IO RLE
 rleMerge rles intersect = do
     let num = length rles
-    withRLEsLen num rles $ \prles -> 
+    withRLEsLen num rles $ \prles ->
         makeRLE $ \porle ->
             rleMerge_ prles porle num intersect
 
 {#fun rleArea as rleArea_
     {
-        withRLEs* `[RLE]',
+        withRLEs* `NonEmpty RLE',
         `Int',
         id `Ptr CUInt'
     } -> `()'
 #}
 
-rleArea :: [RLE] -> Int -> IO [CUInt]
-rleArea r n = do
+rleArea :: NonEmpty RLE -> Int -> IO [CUInt]
+rleArea r n
+    | n < 1 = error "number must be positive"
+    | otherwise = do
     allocaArray n (\pa -> do
         rleArea_ r n pa
         peekArray n pa)
-    
+
 {#fun rleIou as rleIou_
     {
         `Ptr ()',
@@ -172,28 +183,28 @@ rleArea r n = do
     } -> `()'
 #}
 
-rleIou :: [RLE] -> [RLE] -> [Bool] -> IO ((Int,Int), [Double])
+rleIou :: NonEmpty RLE -> NonEmpty RLE -> [Bool] -> IO ((Int,Int), [Double])
 rleIou dt gt iscrowd = do
     let m = length dt
         n = length gt
         c = length iscrowd
-    assert (n == c) $ allocaArray (m*n) $ \po -> 
-        withRLEsLen m dt $ \pdt -> 
-        withRLEsLen n gt $ \pgt -> do 
+    assert (n == c) $ allocaArray (m*n) $ \po ->
+        withRLEsLen m dt $ \pdt ->
+        withRLEsLen n gt $ \pgt -> do
             rleIou_ pdt pgt m n (SV.fromList $ map (toEnum . fromEnum) iscrowd) po
             raw <- peekArray (m * n) po
             return $ ((m,n), map realToFrac raw)
 
 {#fun rleNms as rleNms_
     {
-        withRLEs* `[RLE]',
+        withRLEs* `NonEmpty RLE',
         `Int',
         id `Ptr CUInt',
         `CDouble'
     } -> `()'
 #}
 
-rleNms :: [RLE] -> Double -> IO [Bool]
+rleNms :: NonEmpty RLE -> Double -> IO [Bool]
 rleNms dt thr = do
     let n = length dt
     allocaArray n $ \keep -> do
@@ -234,20 +245,20 @@ bbIou (BB dt) (BB gt) iscrowd = do
 bbNms :: BB -> Double -> IO [Bool]
 bbNms (BB dt) thr = do
     let n = SV.length dt
-    svUnsafeWith dt $ \pbb -> 
+    svUnsafeWith dt $ \pbb ->
         allocaArray n $ \keep -> do
             bbNms_ (castPtr pbb) n keep (realToFrac thr)
             map (>0) <$> peekArray n keep
 
 {#fun rleToBbox as rleToBbox_
     {
-        withRLEs* `[RLE]',
+        withRLEs* `NonEmpty RLE',
         `PtrBB',
         `Int'
     } -> `()'
 #}
 
-rleToBbox :: [RLE] -> IO BB
+rleToBbox :: NonEmpty RLE -> IO BB
 rleToBbox r = do
     let n = length r
     mbb <- SVM.new n
@@ -264,7 +275,7 @@ rleToBbox r = do
     } -> `()'
 #}
 
-rleFrBbox :: BB -> Int -> Int -> IO [RLE]
+rleFrBbox :: BB -> Int -> Int -> IO (NonEmpty RLE)
 rleFrBbox (BB bb) h w = do
     let n = SV.length bb
     makeRLEs n $ \prles -> svUnsafeWith bb $ \pbb -> do

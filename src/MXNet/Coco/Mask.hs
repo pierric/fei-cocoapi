@@ -1,23 +1,26 @@
 {-# LANGUAGE TypeOperators #-}
 module MXNet.Coco.Mask where
 
-import Data.Word
-import qualified Data.ByteString as BS
+import RIO
+import qualified RIO.ByteString as BS
+import qualified RIO.Vector.Unboxed as UV (convert, length)
+import qualified RIO.Vector.Storable as SV (Vector, map)
+import qualified Data.Vector.Storable as SV (unsafeCast)
 import Data.Array.Repa (Array, Z(..), (:.)(..), DIM1, DIM2, DIM3, extent)
 import Data.Array.Repa.Repr.Unboxed
-import qualified Data.Vector.Unboxed as UV (convert, length)
-import qualified Data.Vector.Storable as SV (Vector, map, unsafeCast)
 
 import MXNet.Coco.Raw
 
+-- NOTE:
 -- mask should be of 3 dimension and in CWH order
+-- also assuming that CDouble has the same memory representation as Double
 type Mask = Array U DIM3 Word8
 type Area = Array U DIM1 Word32
 type Iou  = Array U DIM2 Double
 type BBox = Array U DIM2 Double
 type Poly = SV.Vector Double
 
-data CompactRLE = CompactRLE Int Int [BS.ByteString]
+data CompactRLE = CompactRLE Int Int (NonEmpty BS.ByteString)
 
 encode :: Mask -> IO CompactRLE
 encode mask = do
@@ -31,7 +34,7 @@ decode im@(CompactRLE h w bss) = do
     let n = length bss
     rles <- frString im
     raw <- rleDecode rles h w
-    return $ 
+    return $
         fromUnboxed (Z :. n :. w :. h) $
         UV.convert $
         SV.map fromIntegral raw
@@ -44,8 +47,8 @@ merge im intersect = do
         rles <- frString im
         orle <- rleMerge rles intersect
         bs <- rleToString orle
-        return $ CompactRLE h w [bs]
-    else 
+        return $ CompactRLE h w (bs :| [])
+    else
         return im
 
 area :: CompactRLE -> IO Area
@@ -54,7 +57,7 @@ area im@(CompactRLE _ _ bss) = do
     rles <- frString im
     as <- rleArea rles num
     -- assuming the area can be represented as Word32
-    return $ 
+    return $
         fromListUnboxed (Z :. num) $
         map fromIntegral $ as
 
@@ -76,7 +79,7 @@ toBBox :: CompactRLE -> IO BBox
 toBBox im = do
     rles <- frString im
     BB bb <- rleToBbox rles
-    let bb' = UV.convert $ SV.unsafeCast bb
+    let bb' = UV.convert $ SV.unsafeCast  bb
     return $ fromUnboxed (Z :. UV.length bb' :. 4) bb'
 
 frBBox :: BBox -> Int -> Int -> IO CompactRLE
@@ -84,7 +87,7 @@ frBBox bb h w = do
     rles <- rleFrBbox (BB $ SV.unsafeCast $ UV.convert $ toUnboxed bb) h w
     CompactRLE h w <$> mapM rleToString rles
 
-frPoly :: [Poly] -> Int -> Int -> IO CompactRLE
+frPoly :: NonEmpty Poly -> Int -> Int -> IO CompactRLE
 frPoly polys h w = do
     rles <- mapM (\poly -> rleFrPoly (SV.unsafeCast poly) h w) polys
     CompactRLE h w <$> mapM rleToString rles
@@ -93,7 +96,7 @@ frUncompressedRLE :: [Int] -> Int -> Int -> IO CompactRLE
 frUncompressedRLE raw h w = do
     orle <- rleInit h w (map fromIntegral raw)
     crle <- rleToString orle
-    return $ CompactRLE h w [crle]
+    return $ CompactRLE h w (crle :| [])
 
-frString :: CompactRLE -> IO [RLE]
+frString :: CompactRLE -> IO (NonEmpty RLE)
 frString (CompactRLE h w bss) = mapM (\bs -> rleFrString bs h w) bss

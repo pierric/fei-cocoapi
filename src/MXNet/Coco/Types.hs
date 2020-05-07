@@ -2,18 +2,15 @@
 {-# LANGUAGE TemplateHaskell #-}
 module MXNet.Coco.Types where
 
-import Control.Applicative
+import RIO hiding (Category)
+import RIO.Char (ord)
+import RIO.Time (LocalTime(..), TimeOfDay(..), Day, fromGregorianValid)
 import Data.Aeson
 import qualified Data.Attoparsec.Text as A
-import Data.Time.Calendar (Day, fromGregorianValid)
-import Data.Time (LocalTime(..), TimeOfDay(..))
 import Data.Bits ((.&.))
-import Data.Char (ord)
-import Data.Vector (Vector)
 import Control.Lens (makeLenses)
 import GHC.Generics (Generic)
 import Data.Store (Store)
-import Control.DeepSeq (NFData)
 
 data Instance = Instance {
     _info :: Info,
