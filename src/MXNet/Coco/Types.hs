@@ -68,12 +68,12 @@ instance FromJSON License where
         <*> v .: "url"
 
 data Image = Image {
-    _img_id :: !Int, 
-    _img_width :: !Int, 
-    _img_height :: !Int, 
-    _img_file_name :: !String, 
-    _img_license :: !Int, 
-    _img_flickr_url :: !String, 
+    _img_id :: !Int,
+    _img_width :: !Int,
+    _img_height :: !Int,
+    _img_file_name :: !String,
+    _img_license :: !Int,
+    _img_flickr_url :: !String,
     _img_coco_url :: !String,
     _img_date_captured :: !LocalTime
 } deriving (Generic, Show)
@@ -126,7 +126,6 @@ instance NFData Segmentation
 instance FromJSON Segmentation where
     parseJSON value = (withObject "RLE" (\v -> SegRLE <$> v .: "counts" <*> v .: "size") value) <|>
                       (withArray "Polygon" (\v -> SegPolygon <$> parseJSONList (Array v)) value)
-
 data Category = CatObjectDetection {
     _odc_id :: Int,
     _odc_name :: String,
