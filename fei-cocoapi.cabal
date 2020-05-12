@@ -1,5 +1,5 @@
 name:                       fei-cocoapi
-version:                    0.4.0
+version:                    0.5.0
 synopsis:                   Cocodataset with cocoapi
 description:                Haskell binding for the cocoapi in c
 homepage:                   http://github.com/pierric/fei-cocoapi
@@ -28,32 +28,34 @@ Library
                             FlexibleInstances,
                             StandaloneDeriving,
                             DeriveGeneric,
-                            TypeOperators
+                            TypeOperators,
+                            OverloadedStrings,
+                            LambdaCase,
+                            MultiWayIf,
+                            DoAndIfThenElse,
+                            TypeApplications,
+                            DataKinds,
+                            ExplicitForAll,
+                            NoImplicitPrelude
     build-depends:          base >= 4.7 && < 5.0
                           , storable-tuple
-                          , vector >= 0.12
-                          , mtl >= 2.2
-                          , lens >= 4.12
-                          , transformers-base >= 0.4.4
-                          , aeson >= 1.2
-                          , containers >= 0.5
-                          , bytestring >= 0.10
-                          , exceptions >= 0.8.3
+                          , lens
+                          , transformers-base
+                          , aeson
                           , time < 2.0
-                          , repa >= 3.4
-                          , aeson >= 1.0 && <1.5
-                          , attoparsec (>=0.13.2.2 && <0.14)
-                          , lens >= 4.12
-                          , conduit >= 1.2 && < 1.4
+                          , repa
+                          , aeson
+                          , attoparsec
+                          , lens
+                          , conduit
                           , store
-                          , filepath
-                          , directory
                           , random-fu
                           , conduit-concurrent-map
                           , unliftio-core
                           , resourcet
                           , hip
-                          , deepseq
+                          , rio
+                          , vector
                           , fei-base
                           , fei-nn
     Build-tools:         c2hs
@@ -61,64 +63,64 @@ Library
     include-dirs:        cbits/
     includes:            maskApi.h
 
-Executable mask
-    hs-source-dirs:         examples
-    main-is:                Mask.hs
-    default-language:       Haskell2010
-    build-depends:          base >= 4.7 && < 5.0,
-                            fei-cocoapi,
-                            bytestring,
-                            lens,
-                            aeson,
-                            vector,
-                            JuicyPixels,
-                            JuicyPixels-repa,
-                            repa,
-                            store
+-- Executable mask
+--     hs-source-dirs:         examples
+--     main-is:                Mask.hs
+--     default-language:       Haskell2010
+--     build-depends:          base >= 4.7 && < 5.0,
+--                             fei-cocoapi,
+--                             bytestring,
+--                             lens,
+--                             aeson,
+--                             vector,
+--                             JuicyPixels,
+--                             JuicyPixels-repa,
+--                             repa,
+--                             store
 
-Executable profiling
-    hs-source-dirs:         examples
-    main-is:                profiling.hs
-    default-language:       Haskell2010
-    build-depends:          base >= 4.7 && < 5.0,
-                            fei-cocoapi,
-                            fei-nn,
-                            fei-base,
-                            criterion,
-                            store,
-                            repa,
-                            bytestring,
-                            vector,
-                            containers,
-                            conduit,
-                            resourcet,
-                            lens,
-                            deepseq,
-                            mtl,
-                            JuicyPixels,
-                            JuicyPixels-repa,
-                            JuicyPixels-extra,
-                            hip,
-                            conduit-concurrent-map
-   ghc-options:             -threaded
+-- Executable profiling
+--     hs-source-dirs:         examples
+--     main-is:                profiling.hs
+--     default-language:       Haskell2010
+--     build-depends:          base >= 4.7 && < 5.0,
+--                             fei-cocoapi,
+--                             fei-nn,
+--                             fei-base,
+--                             criterion,
+--                             store,
+--                             repa,
+--                             bytestring,
+--                             vector,
+--                             containers,
+--                             conduit,
+--                             resourcet,
+--                             lens,
+--                             deepseq,
+--                             mtl,
+--                             JuicyPixels,
+--                             JuicyPixels-repa,
+--                             JuicyPixels-extra,
+--                             hip,
+--                             conduit-concurrent-map
+--    ghc-options:             -threaded
 
-Executable hist
-    hs-source-dirs:         examples
-    main-is:                hist.hs
-    default-language:       Haskell2010
-    build-depends:          base >= 4.7 && < 5.0,
-                            fei-cocoapi,
-                            fei-base,
-                            fei-nn,
-                            mtl,
-                            store,
-                            repa,
-                            conduit,
-                            lens,
-                            bytestring,
-                            vector,
-                            containers,
-                            resourcet,
-                            histogram-fill,
-                            conduit-concurrent-map
-   ghc-options:             -threaded
+-- Executable hist
+--     hs-source-dirs:         examples
+--     main-is:                hist.hs
+--     default-language:       Haskell2010
+--     build-depends:          base >= 4.7 && < 5.0,
+--                             fei-cocoapi,
+--                             fei-base,
+--                             fei-nn,
+--                             mtl,
+--                             store,
+--                             repa,
+--                             conduit,
+--                             lens,
+--                             bytestring,
+--                             vector,
+--                             containers,
+--                             resourcet,
+--                             histogram-fill,
+--                             conduit-concurrent-map
+--    ghc-options:             -threaded

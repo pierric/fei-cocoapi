@@ -2,18 +2,15 @@
 {-# LANGUAGE TemplateHaskell #-}
 module MXNet.Coco.Types where
 
-import Control.Applicative
+import RIO hiding (Category)
+import RIO.Char (ord)
+import RIO.Time (LocalTime(..), TimeOfDay(..), Day, fromGregorianValid)
 import Data.Aeson
 import qualified Data.Attoparsec.Text as A
-import Data.Time.Calendar (Day, fromGregorianValid)
-import Data.Time (LocalTime(..), TimeOfDay(..))
 import Data.Bits ((.&.))
-import Data.Char (ord)
-import Data.Vector (Vector)
 import Control.Lens (makeLenses)
 import GHC.Generics (Generic)
 import Data.Store (Store)
-import Control.DeepSeq (NFData)
 
 data Instance = Instance {
     _info :: Info,
@@ -71,12 +68,12 @@ instance FromJSON License where
         <*> v .: "url"
 
 data Image = Image {
-    _img_id :: !Int, 
-    _img_width :: !Int, 
-    _img_height :: !Int, 
-    _img_file_name :: !String, 
-    _img_license :: !Int, 
-    _img_flickr_url :: !String, 
+    _img_id :: !Int,
+    _img_width :: !Int,
+    _img_height :: !Int,
+    _img_file_name :: !String,
+    _img_license :: !Int,
+    _img_flickr_url :: !String,
     _img_coco_url :: !String,
     _img_date_captured :: !LocalTime
 } deriving (Generic, Show)
@@ -129,7 +126,6 @@ instance NFData Segmentation
 instance FromJSON Segmentation where
     parseJSON value = (withObject "RLE" (\v -> SegRLE <$> v .: "counts" <*> v .: "size") value) <|>
                       (withArray "Polygon" (\v -> SegPolygon <$> parseJSONList (Array v)) value)
-
 data Category = CatObjectDetection {
     _odc_id :: Int,
     _odc_name :: String,
