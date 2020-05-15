@@ -63,9 +63,9 @@ Library
     include-dirs:        cbits/
     includes:            maskApi.h
 
-Executable mask
+Executable imageutils
     hs-source-dirs:         examples
-    main-is:                Mask.hs
+    main-is:                ImageUtils.hs
     default-language:       Haskell2010
     default-extensions:     RecordWildCards,
                             OverloadedStrings
