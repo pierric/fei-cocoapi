@@ -1,5 +1,20 @@
-# Build
-- Build with IHaskell
-  - need gtk2hs support: https://github.com/gtk2hs/gtk2hs
-    - `sudo apt-get install libgirepository1.0-dev libwebkitgtk-3.0-dev libwebkit2gtk-4.0-dev libgtksourceview-3.0-dev`
-  - need to install haskell kernel for jupyter: https://github.com/gibiansky/IHaskell
+# Haskell wrapper for CocoAPI
+
+# Image Utility
+```
+$ LD_LIBRARY_PATH=<<<PATH-TO-MXNET-DLL>>> stack run imageutils -- --help
+Coco Utility
+
+Usage: imageutils [BASEDIR] [SPLIT] COMMAND
+
+Available options:
+  BASEDIR                  path to coco
+  SPLIT                    data split
+  -h,--help                Show this help text
+
+Available commands:
+  list                     
+  dump     
+```
+
+`imageutils` is an helper to list and dump images from the coco dataset. It renders bounding boxes and masks overlays as well.
