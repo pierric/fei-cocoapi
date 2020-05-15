@@ -6,25 +6,5 @@ packages:
 #- ../IHaskell/ihaskell-display/ihaskell-diagrams
 #- ../IHaskell/ihaskell-display/ihaskell-juicypixels
 extra-deps:
-- ../fei-nn
-- ../fei-base
-- ../tuple-ops
-- git: https://github.com/0xCM/type-combinators.git
-  commit: 58167dd4017b666ff592bb9493b0570a054aabdb
-- git: https://github.com/pierric/haskell-src-exts.git
-  commit: f75a5dbe2ec9fbc67df0936333e0665b033f9e22
-    #- graphviz-2999.20.0.2
-    #- fgl-5.5.4.0
-- JuicyPixels-repa-0.7.1.0
 - hlint-2.1.17
-- haskell-src-exts-util-0.2.5
-- glib-0.13.7.1
-- pango-0.13.6.1
 - hip-1.5.4.0
-extra-include-dirs:
-- /home/jiasen/workspace/mxnet/build-1.6.0/include
-extra-lib-dirs:
-- /home/jiasen/workspace/mxnet/build-1.6.0
-flags:
-  fei-base:
-    MXNet_1_6: true

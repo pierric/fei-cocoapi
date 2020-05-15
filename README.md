@@ -2,7 +2,7 @@
 
 # Image Utility
 ```
-$ LD_LIBRARY_PATH=<<<PATH-TO-MXNET-DLL>>> stack run imageutils -- --help
+$ stack run imageutils -- --help
 Coco Utility
 
 Usage: imageutils [BASEDIR] [SPLIT] COMMAND

@@ -56,8 +56,6 @@ Library
                           , hip
                           , rio
                           , vector
-                          , fei-base
-                          , fei-nn
     Build-tools:         c2hs
     c-sources:           cbits/maskApi.c
     include-dirs:        cbits/
@@ -75,7 +73,6 @@ Executable imageutils
                             aeson,
                             optparse-applicative,
                             JuicyPixels,
-                            JuicyPixels-repa,
                             repa,
                             store,
                             hip,
