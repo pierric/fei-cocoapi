@@ -3,8 +3,8 @@
 resolver: lts-14.27
 packages:
 - .
-- ../IHaskell/ihaskell-display/ihaskell-diagrams
-- ../IHaskell/ihaskell-display/ihaskell-juicypixels
+#- ../IHaskell/ihaskell-display/ihaskell-diagrams
+#- ../IHaskell/ihaskell-display/ihaskell-juicypixels
 extra-deps:
 - ../fei-nn
 - ../fei-base

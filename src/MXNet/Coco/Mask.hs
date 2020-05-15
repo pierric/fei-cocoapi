@@ -1,15 +1,16 @@
 {-# LANGUAGE TypeOperators #-}
 module MXNet.Coco.Mask where
 
-import RIO
-import qualified RIO.ByteString as BS
-import qualified RIO.Vector.Unboxed as UV (convert, length)
-import qualified RIO.Vector.Storable as SV (Vector, map)
-import qualified Data.Vector.Storable as SV (unsafeCast)
-import Data.Array.Repa (Array, Z(..), (:.)(..), DIM1, DIM2, DIM3, extent)
-import Data.Array.Repa.Repr.Unboxed
+import           Data.Array.Repa              ((:.) (..), Array, DIM1, DIM2,
+                                               DIM3, Z (..), extent)
+import           Data.Array.Repa.Repr.Unboxed
+import qualified Data.Vector.Storable         as SV (unsafeCast)
+import           RIO
+import qualified RIO.ByteString               as BS
+import qualified RIO.Vector.Storable          as SV (Vector, map)
+import qualified RIO.Vector.Unboxed           as UV (convert, length)
 
-import MXNet.Coco.Raw
+import           MXNet.Coco.Raw
 
 -- NOTE:
 -- mask should be of 3 dimension and in CWH order
