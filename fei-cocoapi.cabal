@@ -56,7 +56,7 @@ Library
                           , hip
                           , rio
                           , vector
-    Build-tools:         c2hs
+    build-tool-depends:  c2hs:c2hs
     c-sources:           cbits/maskApi.c
     include-dirs:        cbits/
     includes:            maskApi.h
