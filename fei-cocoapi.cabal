@@ -56,6 +56,7 @@ Library
                           , hip
                           , rio
                           , vector
+                          , fei-base >= 1.1.0
     build-tool-depends:  c2hs:c2hs
     c-sources:           cbits/maskApi.c
     include-dirs:        cbits/
@@ -81,7 +82,10 @@ Executable imageutils
                             formatting,
                             palette,
                             colour,
-                            fei-cocoapi
+                            fei-cocoapi,
+                            fei-base >= 1.1.0,
+                            fei-nn >= 2.0.0,
+                            fei-einops
 
 -- Executable profiling
 --     hs-source-dirs:         examples
