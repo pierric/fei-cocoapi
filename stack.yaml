@@ -3,8 +3,16 @@
 resolver: lts-14.27
 packages:
 - .
-#- ../IHaskell/ihaskell-display/ihaskell-diagrams
-#- ../IHaskell/ihaskell-display/ihaskell-juicypixels
+- ../fei-base
+- ../fei-nn
+- ../fei-einops
+- ../tuple-ops
 extra-deps:
-- hlint-2.1.17
 - hip-1.5.4.0
+- git: https://github.com/0xCM/type-combinators.git
+  commit: 58167dd4017b666ff592bb9493b0570a054aabdb
+- git: https://github.com/pierric/haskell-src-exts.git
+  commit: 792ec73bc3b0e8d4aa2683af6b2a3fc03b5f8d95
+flags:
+  fei-base:
+    mxnet_geq_10700: true
