@@ -1,38 +1,40 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE ViewPatterns    #-}
 module Main where
 
-import qualified Codec.Picture                 as G
-import           Control.Lens                  (ix, (^?))
-import qualified Data.Aeson                    as Aeson
-import           Data.Array.Repa               ((:.) (..), Z (..))
-import qualified Data.Array.Repa               as RP
-import           Data.Colour.Palette.ColorSet  (infiniteWebColors)
-import           Data.Colour.SRGB              as COLOR
-import qualified Data.Store                    as Store
+import qualified Codec.Picture                as G
+import           Control.Lens                 (ix, (^?))
+import qualified Data.Aeson                   as Aeson
+import           Data.Colour.Palette.ColorSet (infiniteWebColors)
+import           Data.Colour.SRGB             as COLOR
+import qualified Data.Store                   as Store
 import           Formatting
-import qualified Graphics.Image                as G (Pixel (PixelY), VS (..),
-                                                     displayImage, exchange,
-                                                     fromJPImageRGBA8,
-                                                     toJPImageY8)
-import           Graphics.Image.Interface.Repa (fromRepaArrayP)
-import qualified Graphics.Rasterific           as G
-import qualified Graphics.Rasterific.Texture   as G
-import           Graphics.Text.TrueType        as G
+import qualified Graphics.Image               as G (Pixel (PixelY), VS (..),
+                                                    displayImage, exchange,
+                                                    fromJPImageRGBA8,
+                                                    toJPImageY8)
+import qualified Graphics.Image.Interface     as G (fromVector)
+import qualified Graphics.Rasterific          as G
+import qualified Graphics.Rasterific.Texture  as G
+import           Graphics.Text.TrueType       as G
 import           Options.Applicative
 import           RIO
-import qualified RIO.ByteString                as SBS
-import qualified RIO.ByteString.Lazy           as LBS
+import qualified RIO.ByteString               as SBS
+import qualified RIO.ByteString.Lazy          as LBS
 import           RIO.Directory
 import           RIO.FilePath
-import qualified RIO.HashMap                   as M
-import qualified RIO.NonEmpty                  as RNE
-import qualified RIO.Vector.Boxed              as V
-import qualified RIO.Vector.Storable           as SV
-import qualified RIO.Vector.Unboxed            as UV
+import qualified RIO.HashMap                  as M
+import qualified RIO.NonEmpty                 as RNE
+import qualified RIO.Vector.Boxed             as V
+import qualified RIO.Vector.Storable          as SV
+import qualified RIO.Vector.Unboxed           as UV
 
+import           Fei.Einops                   (rearrange)
+import           MXNet.Base                   (ndshape, toVector)
 import           MXNet.Coco.Index
 import           MXNet.Coco.Mask
-import           MXNet.Coco.Types              hiding (info)
+import           MXNet.Coco.Types             hiding (info)
+import           MXNet.NN.Layer               (mulScalar)
 
 
 data ArgSpec = ListImages
@@ -102,9 +104,8 @@ dumpImage cocoinst base split imgid = do
                             bbox = anno ^. ann_bbox
                             COLOR.RGB r g b = COLOR.toSRGB24 color
                         mask <- getMask anno width height
-                        return $ [
-                            AnnoBoundingBox cat_name font pointSize textColor headColor bbox boxColor,
-                            AnnoMask mask (G.PixelRGB8 r g b)]
+                        return $ ([ AnnoBoundingBox cat_name font pointSize textColor headColor bbox boxColor
+                                  , AnnoMask mask (G.PixelRGB8 r g b) ] :: [AnnoBuilder])
 
                 annotations <- fmap concat $ zipWithM buildAnno (V.toList annos) infiniteWebColors
 
@@ -152,13 +153,14 @@ getMask anno width height = do
               _ -> throwString "Cannot build CRLE"
     crle <- merge crle False
     mask <- decode crle
-    let Z :. c :. w :. h = RP.extent mask
+    [c, w, h] <- ndshape mask
     if (c > 1)
        then (throwString "More than 1 channel")
        else do
            -- HIP uses image HxW
-           let image = RP.transpose $ RP.map (G.PixelY . (*255)) $ RP.reshape (Z :. w :. h) mask
-           return $ G.toJPImageY8  $ G.exchange G.VS $ fromRepaArrayP image
+           mask <- rearrange mask "c w h -> c h w" []
+           mask <- toVector =<< mulScalar 255 mask
+           return $ G.toJPImageY8 $ G.fromVector (h, w) $ SV.map G.PixelY mask
 
 data AnnoBuilder = AnnoBoundingBox
     { _anno_text      :: String
