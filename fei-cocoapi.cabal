@@ -1,6 +1,6 @@
 cabal-version:              2.4
 name:                       fei-cocoapi
-version:                    1.0.0
+version:                    2.0.0
 synopsis:                   Cocodataset with cocoapi
 description:                Haskell binding for the cocoapi in c
 homepage:                   http://github.com/pierric/fei-cocoapi
