@@ -43,7 +43,6 @@ Library
                           , transformers-base
                           , aeson
                           , time < 2.0
-                          , repa
                           , aeson
                           , attoparsec
                           , lens
@@ -74,7 +73,6 @@ Executable imageutils
                             aeson,
                             optparse-applicative,
                             JuicyPixels,
-                            repa,
                             store,
                             hip,
                             Rasterific,
