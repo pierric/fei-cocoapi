@@ -31,10 +31,10 @@ import qualified RIO.Vector.Unboxed           as UV
 
 import           Fei.Einops                   (rearrange)
 import           MXNet.Base                   (ndshape, toVector)
+import           MXNet.Base.Tensor            (mulScalar)
 import           MXNet.Coco.Index
 import           MXNet.Coco.Mask
 import           MXNet.Coco.Types             hiding (info)
-import           MXNet.NN.Layer               (mulScalar)
 
 
 data ArgSpec = ListImages

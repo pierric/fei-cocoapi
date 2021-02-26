@@ -16,3 +16,7 @@ extra-deps:
 flags:
   fei-base:
     mxnet_geq_10700: true
+  fei-nn:
+    mxnet_geq_10700: true
+  fei-einops:
+    mxnet: true
